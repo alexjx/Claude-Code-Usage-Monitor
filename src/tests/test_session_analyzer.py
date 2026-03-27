@@ -545,3 +545,250 @@ class TestSessionAnalyzerEdgeCases:
 
         # Should create separate blocks
         assert len(blocks) >= 2
+
+
+class TestAgentBreakdown:
+    """Test agent breakdown aggregation in session blocks."""
+
+    def test_add_entry_to_agent_breakdown_subagent(self) -> None:
+        """Test _add_entry_to_agent_breakdown for subagent entry."""
+        analyzer = SessionAnalyzer()
+
+        block = SessionBlock(
+            id="test_block",
+            start_time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            end_time=datetime(2024, 1, 1, 17, 0, tzinfo=timezone.utc),
+            token_counts=TokenCounts(),
+        )
+
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, 12, 30, tzinfo=timezone.utc),
+            input_tokens=100,
+            output_tokens=50,
+            cache_creation_tokens=10,
+            cache_read_tokens=5,
+            cost_usd=0.001,
+            model="claude-3-haiku",
+            message_id="msg_123",
+            is_sidechain=True,
+            attribution_type="subagent",
+        )
+
+        analyzer._add_entry_to_agent_breakdown(block, entry)
+
+        assert "subagent" in block.agent_breakdown
+        subagent_stats = block.agent_breakdown["subagent"]
+        assert subagent_stats["attribution_type"] == "subagent"
+        assert subagent_stats["input_tokens"] == 100
+        assert subagent_stats["output_tokens"] == 50
+        assert subagent_stats["cache_creation_tokens"] == 10
+        assert subagent_stats["cache_read_tokens"] == 5
+        assert subagent_stats["cost_usd"] == 0.001
+        assert subagent_stats["entries_count"] == 1
+
+    def test_add_entry_to_agent_breakdown_primary_agent(self) -> None:
+        """Test _add_entry_to_agent_breakdown for primary_agent entry."""
+        analyzer = SessionAnalyzer()
+
+        block = SessionBlock(
+            id="test_block",
+            start_time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            end_time=datetime(2024, 1, 1, 17, 0, tzinfo=timezone.utc),
+            token_counts=TokenCounts(),
+        )
+
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, 12, 30, tzinfo=timezone.utc),
+            input_tokens=200,
+            output_tokens=100,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
+            cost_usd=0.002,
+            model="claude-3-sonnet",
+            message_id="msg_456",
+            agent_id="agent_main",
+            attribution_type="primary_agent",
+        )
+
+        analyzer._add_entry_to_agent_breakdown(block, entry)
+
+        assert "primary_agent:agent_main" in block.agent_breakdown
+        agent_stats = block.agent_breakdown["primary_agent:agent_main"]
+        assert agent_stats["attribution_type"] == "primary_agent"
+        assert agent_stats["agent_id"] == "agent_main"
+        assert agent_stats["input_tokens"] == 200
+        assert agent_stats["output_tokens"] == 100
+        assert agent_stats["entries_count"] == 1
+
+    def test_add_entry_to_agent_breakdown_unknown(self) -> None:
+        """Test _add_entry_to_agent_breakdown for unknown attribution."""
+        analyzer = SessionAnalyzer()
+
+        block = SessionBlock(
+            id="test_block",
+            start_time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            end_time=datetime(2024, 1, 1, 17, 0, tzinfo=timezone.utc),
+            token_counts=TokenCounts(),
+        )
+
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, 12, 30, tzinfo=timezone.utc),
+            input_tokens=150,
+            output_tokens=75,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
+            cost_usd=0.0015,
+            model="claude-3-haiku",
+            message_id="msg_789",
+            attribution_type="unknown",
+        )
+
+        analyzer._add_entry_to_agent_breakdown(block, entry)
+
+        assert "unknown" in block.agent_breakdown
+        unknown_stats = block.agent_breakdown["unknown"]
+        assert unknown_stats["attribution_type"] == "unknown"
+        assert unknown_stats["agent_id"] is None
+        assert unknown_stats["input_tokens"] == 150
+        assert unknown_stats["output_tokens"] == 75
+        assert unknown_stats["entries_count"] == 1
+
+    def test_agent_breakdown_multiple_entries_same_agent(self) -> None:
+        """Test agent_breakdown accumulates tokens for same agent."""
+        analyzer = SessionAnalyzer()
+
+        block = SessionBlock(
+            id="test_block",
+            start_time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            end_time=datetime(2024, 1, 1, 17, 0, tzinfo=timezone.utc),
+            token_counts=TokenCounts(),
+        )
+
+        entry1 = UsageEntry(
+            timestamp=datetime(2024, 1, 1, 12, 30, tzinfo=timezone.utc),
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.001,
+            model="claude-3-haiku",
+            message_id="msg_1",
+            is_sidechain=True,
+            attribution_type="subagent",
+        )
+
+        entry2 = UsageEntry(
+            timestamp=datetime(2024, 1, 1, 13, 0, tzinfo=timezone.utc),
+            input_tokens=200,
+            output_tokens=100,
+            cost_usd=0.002,
+            model="claude-3-sonnet",
+            message_id="msg_2",
+            is_sidechain=True,
+            attribution_type="subagent",
+        )
+
+        analyzer._add_entry_to_agent_breakdown(block, entry1)
+        analyzer._add_entry_to_agent_breakdown(block, entry2)
+
+        assert "subagent" in block.agent_breakdown
+        subagent_stats = block.agent_breakdown["subagent"]
+        assert subagent_stats["input_tokens"] == 300  # 100 + 200
+        assert subagent_stats["output_tokens"] == 150  # 50 + 100
+        assert subagent_stats["cost_usd"] == 0.003  # 0.001 + 0.002
+        assert subagent_stats["entries_count"] == 2
+
+    def test_agent_breakdown_multiple_different_agents(self) -> None:
+        """Test agent_breakdown tracks multiple different agents."""
+        analyzer = SessionAnalyzer()
+
+        block = SessionBlock(
+            id="test_block",
+            start_time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            end_time=datetime(2024, 1, 1, 17, 0, tzinfo=timezone.utc),
+            token_counts=TokenCounts(),
+        )
+
+        entries = [
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+                input_tokens=100,
+                output_tokens=50,
+                cost_usd=0.001,
+                model="claude-3-haiku",
+                message_id="msg_1",
+                attribution_type="primary_agent",
+                agent_id="agent_1",
+            ),
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, 12, 30, tzinfo=timezone.utc),
+                input_tokens=200,
+                output_tokens=100,
+                cost_usd=0.002,
+                model="claude-3-sonnet",
+                message_id="msg_2",
+                attribution_type="subagent",
+            ),
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, 13, 0, tzinfo=timezone.utc),
+                input_tokens=150,
+                output_tokens=75,
+                cost_usd=0.0015,
+                model="claude-3-haiku",
+                message_id="msg_3",
+                attribution_type="primary_agent",
+                agent_id="agent_2",
+            ),
+        ]
+
+        for entry in entries:
+            analyzer._add_entry_to_agent_breakdown(block, entry)
+
+        assert len(block.agent_breakdown) == 3
+        assert "primary_agent:agent_1" in block.agent_breakdown
+        assert "subagent" in block.agent_breakdown
+        assert "primary_agent:agent_2" in block.agent_breakdown
+
+    def test_transform_to_blocks_aggregates_agent_breakdown(self) -> None:
+        """Test that transform_to_blocks properly aggregates agent_breakdown."""
+        analyzer = SessionAnalyzer()
+
+        base_time = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+        entries = [
+            UsageEntry(
+                timestamp=base_time,
+                input_tokens=100,
+                output_tokens=50,
+                cost_usd=0.001,
+                model="claude-3-haiku",
+                message_id="msg_1",
+                attribution_type="primary_agent",
+                agent_id="agent_main",
+            ),
+            UsageEntry(
+                timestamp=base_time + timedelta(minutes=30),
+                input_tokens=200,
+                output_tokens=100,
+                cost_usd=0.002,
+                model="claude-3-sonnet",
+                message_id="msg_2",
+                attribution_type="subagent",
+            ),
+        ]
+
+        blocks = analyzer.transform_to_blocks(entries)
+
+        assert len(blocks) == 1
+        block = blocks[0]
+        assert len(block.agent_breakdown) == 2
+        assert "primary_agent:agent_main" in block.agent_breakdown
+        assert "subagent" in block.agent_breakdown
+
+        # Verify total tokens = sum of agent breakdowns
+        total_from_breakdown = sum(
+            stats["input_tokens"] + stats["output_tokens"] + stats["cache_creation_tokens"] + stats["cache_read_tokens"]
+            for stats in block.agent_breakdown.values()
+        )
+        total_from_block = (
+            block.token_counts.input_tokens + block.token_counts.output_tokens
+            + block.token_counts.cache_creation_tokens + block.token_counts.cache_read_tokens
+        )
+        assert total_from_breakdown == total_from_block

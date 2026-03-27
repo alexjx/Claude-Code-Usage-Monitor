@@ -100,6 +100,7 @@ class UsageAggregator:
         timezone: str = "UTC",
         model_filter: Optional[str] = None,
         dedupe_mode: str = "message-id-max",
+        include_subagents: bool = True,
     ):
         """Initialize the aggregator.
 
@@ -109,12 +110,14 @@ class UsageAggregator:
             timezone: Timezone string for date formatting
             model_filter: Optional model keyword filter (comma/space separated)
             dedupe_mode: Deduplication mode ('message-id-max' or 'legacy')
+            include_subagents: Whether to include subagent entries
         """
         self.data_path = data_path
         self.aggregation_mode = aggregation_mode
         self.timezone = timezone
         self.model_filter = model_filter
         self.dedupe_mode = dedupe_mode
+        self.include_subagents = include_subagents
         self.timezone_handler = TimezoneHandler()
 
     def _parse_model_filter_terms(self, model_filter: Optional[str]) -> List[str]:
@@ -317,7 +320,7 @@ class UsageAggregator:
 
         # Load usage entries
         entries, _ = load_usage_entries(
-            data_path=self.data_path, dedupe_mode=self.dedupe_mode
+            data_path=self.data_path, dedupe_mode=self.dedupe_mode, include_subagents=self.include_subagents
         )
 
         if not entries:
