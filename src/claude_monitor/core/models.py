@@ -30,6 +30,13 @@ class UsageEntry:
     message_id: str = ""
     request_id: str = ""
     session_id: str = ""  # Used for tiered dedup to prevent cross-session mixing
+    # Agent attribution fields
+    agent_id: str = ""  # Direct agent ID if present
+    is_sidechain: bool = False  # True if isSidechain=true or path contains subagents/
+    source_tool_assistant_uuid: str = ""  # For inheriting from parent
+    attribution_type: str = "unknown"  # primary_agent, subagent, unknown
+    # Event type for filtering progress events
+    event_type: str = "assistant"  # "assistant" or "progress"
 
 
 @dataclass
@@ -89,6 +96,8 @@ class SessionBlock:
     limit_messages: List[Dict[str, Any]] = field(default_factory=list)
     projection_data: Optional[Dict[str, Any]] = None
     burn_rate_snapshot: Optional[BurnRate] = None
+    # Agent breakdown: agent_id -> token counts
+    agent_breakdown: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def total_tokens(self) -> int:

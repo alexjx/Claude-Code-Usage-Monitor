@@ -352,7 +352,10 @@ class UsageAggregator:
 
         # Load usage entries
         entries, _ = load_usage_entries(
-            data_path=self.data_path, dedupe_mode=self.dedupe_mode, include_subagents=self.include_subagents
+            data_path=self.data_path,
+            dedupe_mode=self.dedupe_mode,
+            include_subagents=self.include_subagents,
+            count_progress_usage=self.count_progress_usage,
         )
 
         if not entries:

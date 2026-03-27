@@ -35,6 +35,8 @@ def load_usage_entries(
     mode: CostMode = CostMode.AUTO,
     include_raw: bool = False,
     dedupe_mode: str = "message-id-max",
+    include_subagents: bool = True,
+    count_progress_usage: str = "off",
 ) -> Tuple[List[UsageEntry], Optional[List[Dict[str, Any]]]]:
     """Load and convert JSONL files to UsageEntry objects.
 
@@ -45,6 +47,13 @@ def load_usage_entries(
         include_raw: Whether to return raw JSON data alongside entries
         dedupe_mode: Deduplication mode - 'message-id-max' keeps usage-max snapshot
                      for same message.id; 'legacy' uses message_id+request_id
+        include_subagents: Whether to include subagent entries (default True).
+                          If False, entries from subagent paths or with isSidechain=true
+                          will be filtered out.
+        count_progress_usage: How to count progress/working events
+                          'off' (default) = don't count progress usage
+                          'fallback' = count only if no corresponding assistant event exists
+                          'strict' = always count progress events
 
     Returns:
         Tuple of (usage_entries, raw_data) where raw_data is None unless include_raw=True
@@ -89,6 +98,45 @@ def load_usage_entries(
     # Apply message-id-max deduplication after collection
     if dedupe_mode == "message-id-max":
         all_entries = _apply_usage_max_dedup(all_entries)
+
+    # Filter out subagents if requested
+    if not include_subagents:
+        original_count = len(all_entries)
+        all_entries = [e for e in all_entries if e.attribution_type != "subagent"]
+        filtered_count = original_count - len(all_entries)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} subagent entries")
+
+    # Apply count_progress_usage filtering
+    if count_progress_usage != "strict":
+        # Track which message_ids have assistant events
+        assistant_message_ids: Set[str] = set()
+        progress_message_ids: Set[str] = set()
+
+        for entry in all_entries:
+            if entry.message_id:
+                if entry.event_type == "assistant":
+                    assistant_message_ids.add(entry.message_id)
+                elif entry.event_type == "progress":
+                    progress_message_ids.add(entry.message_id)
+
+        # Apply filtering based on count_progress_usage
+        original_count = len(all_entries)
+        if count_progress_usage == "off":
+            # Filter out all progress events
+            all_entries = [
+                e for e in all_entries if e.event_type != "progress"
+            ]
+        elif count_progress_usage == "fallback":
+            # Only include progress events if no corresponding assistant event exists
+            all_entries = [
+                e for e in all_entries
+                if e.event_type != "progress" or e.message_id not in assistant_message_ids
+            ]
+
+        filtered_count = original_count - len(all_entries)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} progress entries (count_progress_usage={count_progress_usage})")
 
     logger.info(f"Processed {len(all_entries)} entries from {len(jsonl_files)} files")
 
@@ -147,6 +195,9 @@ def _process_single_file(
     entries: List[UsageEntry] = []
     raw_data: Optional[List[Dict[str, Any]]] = [] if include_raw else None
 
+    # Check if file is from subagent path (check parent directories)
+    is_from_subagent_path = "subagents" in Path(file_path).parts
+
     try:
         entries_read = 0
         entries_filtered = 0
@@ -169,7 +220,8 @@ def _process_single_file(
                         continue
 
                     entry = _map_to_usage_entry(
-                        data, mode, timezone_handler, pricing_calculator
+                        data, mode, timezone_handler, pricing_calculator,
+                        is_from_subagent_path=is_from_subagent_path
                     )
                     if entry:
                         entries_mapped += 1
@@ -245,6 +297,7 @@ def _map_to_usage_entry(
     mode: CostMode,
     timezone_handler: TimezoneHandler,
     pricing_calculator: PricingCalculator,
+    is_from_subagent_path: bool = False,
 ) -> Optional[UsageEntry]:
     """Map raw data to UsageEntry with proper cost calculation."""
     try:
@@ -274,6 +327,30 @@ def _map_to_usage_entry(
         request_id = data.get("request_id") or data.get("requestId") or "unknown"
         session_id = data.get("sessionId", "") or ""
 
+        # Extract agent attribution fields
+        agent_id = data.get("agentId") or data.get("agent_id") or ""
+        is_sidechain_raw = data.get("isSidechain") or data.get("is_sidechain") or False
+        # Handle string "true" or boolean
+        if isinstance(is_sidechain_raw, str):
+            is_sidechain = is_sidechain_raw.lower() == "true"
+        else:
+            is_sidechain = bool(is_sidechain_raw)
+        source_tool_assistant_uuid = (
+            data.get("sourceToolAssistantUUID") or data.get("source_tool_assistant_uuid") or ""
+        )
+
+        # Determine attribution type
+        attribution_type = _determine_attribution_type(
+            is_sidechain=is_sidechain or is_from_subagent_path,
+            agent_id=agent_id,
+            source_tool_assistant_uuid=source_tool_assistant_uuid,
+        )
+
+        # Extract event type (defaults to "assistant" for backward compatibility)
+        event_type = data.get("type", "assistant")
+        if event_type not in ("assistant", "progress"):
+            event_type = "assistant"
+
         return UsageEntry(
             timestamp=timestamp,
             input_tokens=token_data["input_tokens"],
@@ -285,11 +362,47 @@ def _map_to_usage_entry(
             message_id=message_id,
             request_id=request_id,
             session_id=session_id,
+            agent_id=agent_id,
+            is_sidechain=is_sidechain or is_from_subagent_path,
+            source_tool_assistant_uuid=source_tool_assistant_uuid,
+            attribution_type=attribution_type,
+            event_type=event_type,
         )
 
     except (KeyError, ValueError, TypeError, AttributeError) as e:
         logger.debug(f"Failed to map entry: {type(e).__name__}: {e}")
         return None
+
+
+def _determine_attribution_type(
+    is_sidechain: bool,
+    agent_id: str,
+    source_tool_assistant_uuid: str,
+) -> str:
+    """Determine attribution type based on attribution rules.
+
+    Attribution rules:
+    - isSidechain=true OR path contains subagents/ => subagent
+    - agentId field exists (and not subagent) => primary_agent
+    - sourceToolAssistantUUID traceable => inherit from parent (still primary_agent if no agent_id)
+    - Unattributable => unknown (but still billed)
+    """
+    # Rule 1: subagent if isSidechain or from subagent path
+    if is_sidechain:
+        return "subagent"
+
+    # Rule 2: direct attribution if agentId exists
+    if agent_id:
+        return "primary_agent"
+
+    # Rule 3: sourceToolAssistantUUID traceable - inherits from parent
+    # For now, we mark this as primary_agent since we can't easily
+    # look up the parent here (would need entry tracking)
+    if source_tool_assistant_uuid:
+        return "primary_agent"
+
+    # Rule 4: unattributable
+    return "unknown"
 
 
 class UsageEntryMapper:
