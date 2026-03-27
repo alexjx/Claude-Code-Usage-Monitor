@@ -393,6 +393,7 @@ def _run_table_view(
             model_filter=getattr(args, "model_filter", None),
             dedupe_mode=getattr(args, "dedupe_mode", "message-id-max"),
             include_subagents=args.include_subagents,
+            count_progress_usage=getattr(args, "count_progress_usage", "off"),
         )
 
         # Create table controller

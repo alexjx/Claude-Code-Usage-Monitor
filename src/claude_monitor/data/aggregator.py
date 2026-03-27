@@ -59,6 +59,7 @@ class AggregatedPeriod:
     model_breakdowns: Dict[str, AggregatedStats] = field(
         default_factory=lambda: defaultdict(AggregatedStats)
     )
+    agent_breakdown: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def add_entry(self, entry: UsageEntry) -> None:
         """Add an entry to this period's aggregate."""
@@ -71,6 +72,30 @@ class AggregatedPeriod:
 
         # Add to model-specific stats
         self.model_breakdowns[model].add_entry(entry)
+
+        # Track agent breakdown
+        attribution_type = entry.attribution_type or "unknown"
+        agent_key = f"{attribution_type}:{entry.agent_id}" if entry.agent_id else attribution_type
+
+        if agent_key not in self.agent_breakdown:
+            self.agent_breakdown[agent_key] = {
+                "attribution_type": attribution_type,
+                "agent_id": entry.agent_id or None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+                "cost_usd": 0.0,
+                "entries_count": 0,
+            }
+
+        agent_stats = self.agent_breakdown[agent_key]
+        agent_stats["input_tokens"] += entry.input_tokens
+        agent_stats["output_tokens"] += entry.output_tokens
+        agent_stats["cache_creation_tokens"] += entry.cache_creation_tokens
+        agent_stats["cache_read_tokens"] += entry.cache_read_tokens
+        agent_stats["cost_usd"] += entry.cost_usd or 0.0
+        agent_stats["entries_count"] += 1
 
     def to_dict(self, period_type: str) -> Dict[str, Any]:
         """Convert to dictionary format for display."""
@@ -86,6 +111,7 @@ class AggregatedPeriod:
                 model: stats.to_dict() for model, stats in self.model_breakdowns.items()
             },
             "entries_count": self.stats.count,
+            "agent_breakdown": self.agent_breakdown,
         }
         return result
 
@@ -101,6 +127,7 @@ class UsageAggregator:
         model_filter: Optional[str] = None,
         dedupe_mode: str = "message-id-max",
         include_subagents: bool = True,
+        count_progress_usage: str = "off",
     ):
         """Initialize the aggregator.
 
@@ -111,6 +138,10 @@ class UsageAggregator:
             model_filter: Optional model keyword filter (comma/space separated)
             dedupe_mode: Deduplication mode ('message-id-max' or 'legacy')
             include_subagents: Whether to include subagent entries
+            count_progress_usage: How to count progress/working events
+                'off' = don't count progress usage (default)
+                'fallback' = count only if explicit usage data exists and no corresponding assistant event
+                'strict' = always count progress events (may overcount)
         """
         self.data_path = data_path
         self.aggregation_mode = aggregation_mode
@@ -118,6 +149,7 @@ class UsageAggregator:
         self.model_filter = model_filter
         self.dedupe_mode = dedupe_mode
         self.include_subagents = include_subagents
+        self.count_progress_usage = count_progress_usage
         self.timezone_handler = TimezoneHandler()
 
     def _parse_model_filter_terms(self, model_filter: Optional[str]) -> List[str]:

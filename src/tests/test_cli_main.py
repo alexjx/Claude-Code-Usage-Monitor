@@ -138,6 +138,8 @@ class TestFunctions:
         args.plan = "pro"
         args.model_filter = "haiku"
         args.dedupe_mode = "message-id-max"
+        args.include_subagents = True
+        args.count_progress_usage = "off"
 
         with (
             patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
@@ -173,5 +175,7 @@ class TestFunctions:
                 timezone="UTC",
                 model_filter="haiku",
                 dedupe_mode="message-id-max",
+                include_subagents=True,
+                count_progress_usage="off",
             )
             mock_controller_cls.return_value.display_aggregated_view.assert_called_once()

@@ -440,6 +440,124 @@ class TableViewsController:
 
         return panel
 
+    def _create_agent_breakdown_panel(
+        self, agent_breakdown: Dict[str, Any], totals: Dict[str, Any]
+    ) -> Panel:
+        """Create agent breakdown panel for display.
+
+        Args:
+            agent_breakdown: Aggregated agent breakdown data
+            totals: Total statistics for percentage calculation
+
+        Returns:
+            Rich Panel object with agent breakdown
+        """
+        lines = []
+
+        # Calculate grand totals for percentage
+        total_tokens = totals.get("total_tokens", 0)
+        total_cost = totals.get("total_cost", 0.0)
+
+        # Sort agents by total tokens
+        agent_stats = []
+        for agent_key, stats in agent_breakdown.items():
+            if isinstance(stats, dict):
+                agent_tokens = (
+                    stats.get("input_tokens", 0)
+                    + stats.get("output_tokens", 0)
+                    + stats.get("cache_creation_tokens", 0)
+                    + stats.get("cache_read_tokens", 0)
+                )
+                agent_cost = stats.get("cost_usd", 0.0)
+                agent_count = stats.get("entries_count", 0)
+
+                # Format agent name for display
+                attribution_type = stats.get("attribution_type", "unknown")
+                agent_id = stats.get("agent_id")
+                if agent_id:
+                    display_name = f"{attribution_type} ({agent_id})"
+                else:
+                    display_name = attribution_type
+
+                agent_stats.append({
+                    "name": display_name,
+                    "tokens": agent_tokens,
+                    "cost": agent_cost,
+                    "count": agent_count,
+                })
+
+        # Sort by tokens descending
+        agent_stats.sort(key=lambda x: -x["tokens"])
+
+        if not agent_stats:
+            return Panel(
+                Text("No agent data available", style=self.value_style),
+                title="Agent Breakdown",
+                border_style=self.border_style,
+                expand=False,
+            )
+
+        lines.append("[bold]👤 Agent Breakdown:[/]")
+        lines.append("")
+
+        for stat in agent_stats:
+            pct = (stat["tokens"] / total_tokens * 100.0) if total_tokens > 0 else 0.0
+            cost_pct = (stat["cost"] / total_cost * 100.0) if total_cost > 0 else 0.0
+
+            lines.append(
+                f"• [value]{stat['name']}:[/] [warning]{stat['tokens']:,}[/][dim] tokens[/] "
+                f"({pct:.1f}%) | [success]{stat['cost']:.4f}[/][dim] USD[/] ({cost_pct:.1f}%)"
+            )
+
+        text = Text("\n".join(lines), style=self.value_style)
+
+        panel = Panel(
+            text,
+            title="Agent Breakdown",
+            title_align="left",
+            border_style=self.border_style,
+            expand=False,
+            padding=(1, 2),
+        )
+
+        return panel
+
+    def _compute_agent_breakdown_totals(
+        self, data: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Compute aggregated agent breakdown across all periods.
+
+        Args:
+            data: List of aggregated period data
+
+        Returns:
+            Dictionary mapping agent keys to aggregated stats
+        """
+        combined: Dict[str, Dict[str, Any]] = {}
+
+        for period in data:
+            period_breakdown = period.get("agent_breakdown", {})
+            for agent_key, stats in period_breakdown.items():
+                if agent_key not in combined:
+                    combined[agent_key] = {
+                        "attribution_type": stats.get("attribution_type", "unknown"),
+                        "agent_id": stats.get("agent_id"),
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_creation_tokens": 0,
+                        "cache_read_tokens": 0,
+                        "cost_usd": 0.0,
+                        "entries_count": 0,
+                    }
+
+                for key in ["input_tokens", "output_tokens", "cache_creation_tokens",
+                            "cache_read_tokens", "entries_count"]:
+                    combined[agent_key][key] += stats.get(key, 0)
+
+                combined[agent_key]["cost_usd"] += stats.get("cost_usd", 0.0)
+
+        return combined
+
     def _create_calib_disclosure(self, dedupe_mode: str) -> Panel:
         """Create "口径说明" (calibration disclosure) panel when dedupe-mode changed.
 
@@ -564,6 +682,15 @@ class TableViewsController:
         # Create and display table
         table = self.create_aggregate_table(data, totals, view_mode, timezone)
 
+        # Compute agent breakdown if requested
+        agent_breakdown_panel = None
+        if show_agent_breakdown:
+            agent_breakdown = self._compute_agent_breakdown_totals(data)
+            if agent_breakdown:
+                agent_breakdown_panel = self._create_agent_breakdown_panel(
+                    agent_breakdown, totals
+                )
+
         # Display using console if provided
         if console:
             # Show "口径说明" disclosure if dedupe_mode is not default
@@ -574,6 +701,9 @@ class TableViewsController:
             console.print(summary_panel)
             console.print()
             console.print(table)
+            if agent_breakdown_panel:
+                console.print()
+                console.print(agent_breakdown_panel)
         else:
             from rich import print as rprint
 
@@ -585,3 +715,6 @@ class TableViewsController:
             rprint(summary_panel)
             rprint()
             rprint(table)
+            if agent_breakdown_panel:
+                rprint()
+                rprint(agent_breakdown_panel)
