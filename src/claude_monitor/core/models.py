@@ -29,6 +29,7 @@ class UsageEntry:
     model: str = ""
     message_id: str = ""
     request_id: str = ""
+    session_id: str = ""  # Used for tiered dedup to prevent cross-session mixing
 
 
 @dataclass

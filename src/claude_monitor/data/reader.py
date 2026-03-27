@@ -272,6 +272,7 @@ def _map_to_usage_entry(
         message = data.get("message", {})
         message_id = data.get("message_id") or message.get("id") or ""
         request_id = data.get("request_id") or data.get("requestId") or "unknown"
+        session_id = data.get("sessionId", "") or ""
 
         return UsageEntry(
             timestamp=timestamp,
@@ -283,6 +284,7 @@ def _map_to_usage_entry(
             model=model,
             message_id=message_id,
             request_id=request_id,
+            session_id=session_id,
         )
 
     except (KeyError, ValueError, TypeError, AttributeError) as e:
@@ -423,10 +425,16 @@ def _apply_usage_max_dedup(entries: List[UsageEntry]) -> List[UsageEntry]:
         else:
             entries_without_id.append(entry)
 
-    # Group entries with message_id by the key
+    # Group entries with message_id by the tiered key
+    # This ensures entries from different sessions are not mixed up
     groups: Dict[str, List[UsageEntry]] = {}
     for entry in entries_with_id:
-        key = entry.message_id
+        # Build dict for tiered dedup key function
+        data_for_key: Dict[str, Any] = {
+            "message_id": entry.message_id,
+            "sessionId": entry.session_id,
+        }
+        key = _create_tiered_dedup_key(data_for_key) or entry.message_id
         if key not in groups:
             groups[key] = []
         groups[key].append(entry)
