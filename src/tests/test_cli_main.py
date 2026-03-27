@@ -137,6 +137,7 @@ class TestFunctions:
         args.timezone = "UTC"
         args.plan = "pro"
         args.model_filter = "haiku"
+        args.dedupe_mode = "message-id-max"
 
         with (
             patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
@@ -171,5 +172,6 @@ class TestFunctions:
                 aggregation_mode="daily",
                 timezone="UTC",
                 model_filter="haiku",
+                dedupe_mode="message-id-max",
             )
             mock_controller_cls.return_value.display_aggregated_view.assert_called_once()

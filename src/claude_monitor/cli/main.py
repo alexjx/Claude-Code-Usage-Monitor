@@ -391,6 +391,7 @@ def _run_table_view(
             aggregation_mode=view_mode,
             timezone=args.timezone,
             model_filter=getattr(args, "model_filter", None),
+            dedupe_mode=getattr(args, "dedupe_mode", "message-id-max"),
         )
 
         # Create table controller

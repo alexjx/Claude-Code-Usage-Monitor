@@ -179,6 +179,11 @@ class Settings(BaseSettings):
 
     clear: bool = Field(default=False, description="Clear saved configuration")
 
+    dedupe_mode: Literal["message-id-max", "legacy"] = Field(
+        default="message-id-max",
+        description="Deduplication mode: 'message-id-max' keeps usage-max snapshot for same message.id; 'legacy' uses message_id+request_id",
+    )
+
     @field_validator("plan", mode="before")
     @classmethod
     def validate_plan(cls, v: Any) -> str:
@@ -248,6 +253,20 @@ class Settings(BaseSettings):
         if v_upper not in valid_levels:
             raise ValueError(f"Invalid log level: {v}")
         return v_upper
+
+    @field_validator("dedupe_mode", mode="before")
+    @classmethod
+    def validate_dedupe_mode(cls, v: Any) -> str:
+        """Validate and normalize dedupe_mode value."""
+        if isinstance(v, str):
+            v_lower = v.lower()
+            valid_modes = ["message-id-max", "legacy"]
+            if v_lower in valid_modes:
+                return v_lower
+            raise ValueError(
+                f"Invalid dedupe_mode: {v}. Must be one of: {', '.join(valid_modes)}"
+            )
+        return v
 
     @classmethod
     def settings_customise_sources(
@@ -360,5 +379,6 @@ class Settings(BaseSettings):
         args.log_level = self.log_level
         args.log_file = str(self.log_file) if self.log_file else None
         args.version = self.version
+        args.dedupe_mode = self.dedupe_mode
 
         return args

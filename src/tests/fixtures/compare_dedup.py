@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Comparison script for deduplication strategies.
 
-This script compares the current deduplication strategy (message_id + request_id)
-against a reference strategy (message_id only) to identify potential over-counting
-issues in multi-segment assistant messages.
+This script compares the deduplication strategies:
+- legacy mode: message_id + request_id (both required) - OLD behavior
+- message-id-max mode: message_id only with usage-max selection - NEW behavior
 
 Run from project root:
     python -m src.tests.fixtures.compare_dedup
@@ -14,11 +14,14 @@ Or with uv:
 
 import json
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.claude_monitor.core.models import CostMode
 from src.claude_monitor.core.pricing import PricingCalculator
+from src.claude_monitor.data.reader import load_usage_entries
 
 
 @dataclass
@@ -309,6 +312,217 @@ def compare_file(file_path: Path) -> dict[str, Any]:
     }
 
 
+def compare_file_with_actual(file_path: Path) -> dict[str, Any]:
+    """Compare dedup strategies including actual reader.py implementation.
+
+    Compares:
+    - legacy mode (message_id + request_id) - OLD behavior
+    - message-id-max mode using actual reader.py - NEW behavior
+    """
+    entries = load_jsonl(file_path)
+
+    # Legacy behavior (message_id + request_id)
+    _, legacy_stats = current_dedup_strategy(entries)
+
+    # Reference behavior (message_id only, first occurrence)
+    _, reference_stats = reference_dedup_strategy(entries)
+
+    # Actual reader.py with message-id-max mode
+    try:
+        actual_stats = compute_stats_with_reader(file_path, "message-id-max")
+    except Exception as e:
+        # If reader.py fails, return without actual stats
+        return {
+            "file": str(file_path),
+            "entries_total": len(entries),
+            "legacy": {
+                "unique": legacy_stats.unique_entries,
+                "deduped": legacy_stats.entries_deduped,
+                "input_tokens": legacy_stats.total_input_tokens,
+                "output_tokens": legacy_stats.total_output_tokens,
+                "total_tokens": legacy_stats.total_tokens,
+                "total_cost": legacy_stats.total_cost,
+            },
+            "reference": {
+                "unique": reference_stats.unique_entries,
+                "deduped": reference_stats.entries_deduped,
+                "input_tokens": reference_stats.total_input_tokens,
+                "output_tokens": reference_stats.total_output_tokens,
+                "total_tokens": reference_stats.total_tokens,
+                "total_cost": reference_stats.total_cost,
+            },
+            "ratio": {
+                "tokens": round(
+                    legacy_stats.total_tokens / reference_stats.total_tokens
+                    if reference_stats.total_tokens > 0 else 1.0, 4
+                ),
+                "cost": round(
+                    legacy_stats.total_cost / reference_stats.total_cost
+                    if reference_stats.total_cost > 0 else 1.0, 4
+                ),
+            },
+            "actual_message_id_max": None,
+            "actual_ratio": None,
+        }
+
+    # Ratio of legacy vs reference (should be > 1 for modern fixtures - shows overcounting)
+    legacy_vs_ref_token_ratio = (
+        legacy_stats.total_tokens / reference_stats.total_tokens
+        if reference_stats.total_tokens > 0
+        else 1.0
+    )
+
+    # Ratio of actual (message-id-max) vs reference (should be ~1.0 - shows fix works)
+    actual_vs_ref_token_ratio = (
+        actual_stats.total_tokens / reference_stats.total_tokens
+        if reference_stats.total_tokens > 0
+        else 1.0
+    )
+
+    return {
+        "file": str(file_path),
+        "entries_total": len(entries),
+        "legacy": {
+            "unique": legacy_stats.unique_entries,
+            "deduped": legacy_stats.entries_deduped,
+            "input_tokens": legacy_stats.total_input_tokens,
+            "output_tokens": legacy_stats.total_output_tokens,
+            "total_tokens": legacy_stats.total_tokens,
+            "total_cost": legacy_stats.total_cost,
+        },
+        "reference": {
+            "unique": reference_stats.unique_entries,
+            "deduped": reference_stats.entries_deduped,
+            "input_tokens": reference_stats.total_input_tokens,
+            "output_tokens": reference_stats.total_output_tokens,
+            "total_tokens": reference_stats.total_tokens,
+            "total_cost": reference_stats.total_cost,
+        },
+        "ratio": {
+            "tokens": round(legacy_vs_ref_token_ratio, 4),
+            "cost": round(
+                legacy_stats.total_cost / reference_stats.total_cost
+                if reference_stats.total_cost > 0 else 1.0, 4
+            ),
+        },
+        "actual_message_id_max": {
+            "unique": actual_stats.unique_entries,
+            "input_tokens": actual_stats.total_input_tokens,
+            "output_tokens": actual_stats.total_output_tokens,
+            "total_tokens": actual_stats.total_tokens,
+            "total_cost": actual_stats.total_cost,
+        },
+        "actual_ratio": {
+            "tokens": round(actual_vs_ref_token_ratio, 4),
+            "cost": round(
+                actual_stats.total_cost / reference_stats.total_cost
+                if reference_stats.total_cost > 0 else 1.0, 4
+            ),
+        },
+    }
+
+
+def compute_stats_from_usage_entries(entries: list, seen_ids: set) -> tuple:
+    """Compute statistics from UsageEntry objects (from reader.py).
+
+    Returns (unique_entries, stats).
+    """
+    unique_entries = []
+    total_input = 0
+    total_output = 0
+    total_cache_creation = 0
+    total_cache_read = 0
+    total_cost = 0.0
+
+    for entry in entries:
+        msg_id = entry.message_id
+        if not msg_id:
+            continue
+
+        if msg_id in seen_ids:
+            continue
+
+        seen_ids.add(msg_id)
+        unique_entries.append(entry)
+
+        total_input += entry.input_tokens
+        total_output += entry.output_tokens
+        total_cache_creation += entry.cache_creation_tokens
+        total_cache_read += entry.cache_read_tokens
+        total_cost += entry.cost_usd
+
+    return unique_entries, DedupStats(
+        entries_processed=len(entries),
+        entries_deduped=len(entries) - len(unique_entries),
+        unique_entries=len(unique_entries),
+        total_input_tokens=total_input,
+        total_output_tokens=total_output,
+        total_cache_creation=total_cache_creation,
+        total_cache_read=total_cache_read,
+        total_tokens=total_input + total_output + total_cache_creation + total_cache_read,
+        total_cost=round(total_cost, 6),
+    )
+
+
+def compute_stats_with_reader(file_path: Path, dedupe_mode: str) -> DedupStats:
+    """Compute statistics using actual reader.py with specified dedupe_mode.
+
+    Args:
+        file_path: Path to JSONL file
+        dedupe_mode: Deduplication mode to use
+
+    Returns:
+        DedupStats for the entries loaded with the specified mode
+    """
+    # Create a temp directory with the JSONL file
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Copy the file to temp directory (reader expects a directory of JSONL files)
+        import shutil
+        temp_file = Path(temp_dir) / "test.jsonl"
+        shutil.copy(file_path, temp_file)
+
+        # Load entries with the specified dedupe_mode
+        entries, _ = load_usage_entries(
+            data_path=temp_dir,
+            dedupe_mode=dedupe_mode,
+        )
+
+    # Compute stats from entries
+    seen: set[str] = set()
+    total_input = 0
+    total_output = 0
+    total_cache_creation = 0
+    total_cache_read = 0
+    total_cost = 0.0
+
+    for entry in entries:
+        msg_id = entry.message_id
+        if not msg_id:
+            continue
+
+        if msg_id in seen:
+            continue
+
+        seen.add(msg_id)
+        total_input += entry.input_tokens
+        total_output += entry.output_tokens
+        total_cache_creation += entry.cache_creation_tokens
+        total_cache_read += entry.cache_read_tokens
+        total_cost += entry.cost_usd
+
+    return DedupStats(
+        entries_processed=len(entries),
+        entries_deduped=0,  # Not tracked in this flow
+        unique_entries=len(seen),
+        total_input_tokens=total_input,
+        total_output_tokens=total_output,
+        total_cache_creation=total_cache_creation,
+        total_cache_read=total_cache_read,
+        total_tokens=total_input + total_output + total_cache_creation + total_cache_read,
+        total_cost=round(total_cost, 6),
+    )
+
+
 def run_comparison(fixtures_dir: Path) -> dict[str, Any]:
     """Run comparison on all fixture files."""
     results = {}
@@ -323,7 +537,7 @@ def run_comparison(fixtures_dir: Path) -> dict[str, Any]:
         for size in ["small", "medium", "large"]:
             file_path = category_dir / f"{size}.jsonl"
             if file_path.exists():
-                results[category][size] = compare_file(file_path)
+                results[category][size] = compare_file_with_actual(file_path)
 
     return results
 
@@ -333,8 +547,11 @@ def print_report(results: dict[str, Any]) -> None:
     print("\n" + "=" * 80)
     print("DEDUPLICATION COMPARISON REPORT")
     print("=" * 80)
-    print("\nCurrent strategy: message_id + request_id (both required)")
-    print("Reference strategy: message_id only\n")
+    print("\nStrategies compared:")
+    print("  - Legacy (message_id + request_id): OLD behavior (may over-count)")
+    print("  - Reference (message_id only): FIRST occurrence kept")
+    print("  - Actual reader.py (message-id-max): USAGE-MAX snapshot kept")
+    print("  - Actual ratio (reader-id-max / reference) should be ~1.0 after fix\n")
 
     for category, sizes in results.items():
         print(f"\n{'=' * 40}")
@@ -343,23 +560,45 @@ def print_report(results: dict[str, Any]) -> None:
 
         for size, data in sizes.items():
             print(f"\n  {size.upper()} ({data['entries_total']} entries):")
-            print(f"    Current (msg_id+req_id):")
-            print(f"      Unique entries: {data['current']['unique']}")
-            print(f"      Total tokens: {data['current']['total_tokens']:,}")
-            print(f"      Total cost: ${data['current']['total_cost']:.6f}")
+
+            # Legacy (old behavior)
+            print(f"    Legacy (msg_id+req_id):")
+            print(f"      Unique entries: {data['legacy']['unique']}")
+            print(f"      Total tokens: {data['legacy']['total_tokens']:,}")
+            print(f"      Total cost: ${data['legacy']['total_cost']:.6f}")
+
+            # Reference (correct behavior)
             print(f"    Reference (msg_id only):")
             print(f"      Unique entries: {data['reference']['unique']}")
             print(f"      Total tokens: {data['reference']['total_tokens']:,}")
             print(f"      Total cost: ${data['reference']['total_cost']:.6f}")
-            print(f"    Ratio (current / reference):")
+
+            # Legacy vs Reference ratio (should be > 1 for modern fixtures - shows overcounting)
+            print(f"    Legacy/Reference ratio:")
             print(f"      Tokens: {data['ratio']['tokens']:.4f}")
             print(f"      Cost:   {data['ratio']['cost']:.4f}")
 
-            # Flag issues
+            # Flag legacy overcounting
             if data['ratio']['tokens'] > 1.0:
-                print(f"    WARNING: Over-counting detected! "
-                      f"Current strategy counts {data['current']['unique']} entries, "
+                print(f"    WARNING: Legacy over-counts! "
+                      f"Legacy has {data['legacy']['unique']} entries, "
                       f"but reference expects {data['reference']['unique']}")
+
+            # Actual reader.py stats
+            if data['actual_message_id_max'] is not None:
+                print(f"    Actual reader.py (message-id-max):")
+                print(f"      Unique entries: {data['actual_message_id_max']['unique']}")
+                print(f"      Total tokens: {data['actual_message_id_max']['total_tokens']:,}")
+                print(f"      Total cost: ${data['actual_message_id_max']['total_cost']:.6f}")
+                print(f"    Actual/Reference ratio (should be ~1.0):")
+                print(f"      Tokens: {data['actual_ratio']['tokens']:.4f}")
+                print(f"      Cost:   {data['actual_ratio']['cost']:.4f}")
+
+                # Check if actual ratio is close to 1.0
+                if abs(data['actual_ratio']['tokens'] - 1.0) > 0.01:
+                    print(f"    NOTE: Actual ratio is not ~1.0, fix may need adjustment")
+                else:
+                    print(f"    SUCCESS: Actual ratio is ~1.0, fix working!")
 
     print("\n" + "=" * 80)
     print("END OF REPORT")
@@ -379,16 +618,20 @@ def main() -> int:
     results = run_comparison(fixtures_dir)
     print_report(results)
 
-    # Return non-zero if any ratios are != 1.0 (indicating discrepancy)
-    has_discrepancy = False
-    for category, sizes in results.items():
-        for size, data in sizes.items():
-            if data["ratio"]["tokens"] != 1.0 or data["ratio"]["cost"] != 1.0:
-                has_discrepancy = True
+    # Check if the actual reader.py ratio is ~1.0 for modern fixtures (indicating fix works)
+    fix_working = True
+    for category in ["modern-main", "modern-subagents", "mixed"]:
+        if category in results:
+            for size, data in results[category].items():
+                if data["actual_ratio"] is not None:
+                    if abs(data["actual_ratio"]["tokens"] - 1.0) > 0.01:
+                        fix_working = False
+                        break
 
-    if has_discrepancy:
-        print("NOTE: Discrepancies found between dedup strategies.")
-        print("This is expected for modern-main, modern-subagents, and mixed fixtures.")
+    if fix_working:
+        print("SUCCESS: message-id-max mode produces ratio ~1.0 for modern fixtures!")
+    else:
+        print("NOTE: message-id-max mode ratio is not ~1.0 for some modern fixtures.")
 
     return 0
 

@@ -99,6 +99,7 @@ class UsageAggregator:
         aggregation_mode: str = "daily",
         timezone: str = "UTC",
         model_filter: Optional[str] = None,
+        dedupe_mode: str = "message-id-max",
     ):
         """Initialize the aggregator.
 
@@ -107,11 +108,13 @@ class UsageAggregator:
             aggregation_mode: Mode of aggregation ('daily' or 'monthly')
             timezone: Timezone string for date formatting
             model_filter: Optional model keyword filter (comma/space separated)
+            dedupe_mode: Deduplication mode ('message-id-max' or 'legacy')
         """
         self.data_path = data_path
         self.aggregation_mode = aggregation_mode
         self.timezone = timezone
         self.model_filter = model_filter
+        self.dedupe_mode = dedupe_mode
         self.timezone_handler = TimezoneHandler()
 
     def _parse_model_filter_terms(self, model_filter: Optional[str]) -> List[str]:
@@ -313,7 +316,9 @@ class UsageAggregator:
         logger.info(f"Starting aggregation in {self.aggregation_mode} mode")
 
         # Load usage entries
-        entries, _ = load_usage_entries(data_path=self.data_path)
+        entries, _ = load_usage_entries(
+            data_path=self.data_path, dedupe_mode=self.dedupe_mode
+        )
 
         if not entries:
             logger.warning("No usage entries found")
