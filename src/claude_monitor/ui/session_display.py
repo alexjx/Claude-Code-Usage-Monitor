@@ -50,6 +50,13 @@ class SessionDisplayData:
     show_exceed_notification: bool = False
     show_tokens_will_run_out: bool = False
     original_limit: int = 0
+    agent_breakdown: dict[str, Any] = None
+    show_agent_breakdown: bool = False
+
+    def __post_init__(self) -> None:
+        """Initialize default values for optional fields."""
+        if self.agent_breakdown is None:
+            self.agent_breakdown = {}
 
 
 class SessionDisplayComponent:
@@ -94,6 +101,80 @@ class SessionDisplayComponent:
 
         return f"{color} [{filled_bar}]"
 
+    def _render_agent_breakdown_section(
+        self,
+        agent_breakdown: dict[str, Any],
+        indent: str = "  ",
+    ) -> list[str]:
+        """Render agent breakdown section.
+
+        Args:
+            agent_breakdown: Agent breakdown data mapping agent keys to stats
+            indent: Indentation string for formatting
+
+        Returns:
+            List of formatted lines
+        """
+        lines = []
+
+        if not agent_breakdown:
+            return lines
+
+        # Calculate totals for percentage calculation
+        total_tokens = 0
+        for stats in agent_breakdown.values():
+            if isinstance(stats, dict):
+                total_tokens += (
+                    stats.get("input_tokens", 0)
+                    + stats.get("output_tokens", 0)
+                    + stats.get("cache_creation_tokens", 0)
+                    + stats.get("cache_read_tokens", 0)
+                )
+
+        lines.append(f"{indent}[separator]{'─' * 50}[/]")
+        lines.append(f"{indent}[bold]👤 Agent Breakdown:[/]")
+
+        for agent_key, stats in sorted(
+            agent_breakdown.items(),
+            key=lambda x: -(
+                x[1].get("input_tokens", 0)
+                + x[1].get("output_tokens", 0)
+                + x[1].get("cache_creation_tokens", 0)
+                + x[1].get("cache_read_tokens", 0)
+                if isinstance(x[1], dict)
+                else 0
+            ),
+        ):
+            if not isinstance(stats, dict):
+                continue
+
+            agent_tokens = (
+                stats.get("input_tokens", 0)
+                + stats.get("output_tokens", 0)
+                + stats.get("cache_creation_tokens", 0)
+                + stats.get("cache_read_tokens", 0)
+            )
+
+            if total_tokens > 0:
+                pct = (agent_tokens / total_tokens) * 100.0
+                pct_str = f" ({pct:.1f}%)"
+            else:
+                pct_str = ""
+
+            # Format agent name for display
+            if ":" in agent_key:
+                # Format "attribution_type:agent_id" as "attribution (agent_id)"
+                attr_type, agent_id = agent_key.split(":", 1)
+                display_name = f"{attr_type} ({agent_id})"
+            else:
+                display_name = agent_key
+
+            lines.append(
+                f"{indent}• [value]{display_name}:[/] [warning]{agent_tokens:,}[/][dim] tokens{pct_str}[/]"
+            )
+
+        return lines
+
     def format_active_session_screen_v2(self, data: SessionDisplayData) -> list[str]:
         """Format complete active session screen using data class.
 
@@ -126,6 +207,8 @@ class SessionDisplayComponent:
             show_exceed_notification=data.show_exceed_notification,
             show_tokens_will_run_out=data.show_tokens_will_run_out,
             original_limit=data.original_limit,
+            agent_breakdown=data.agent_breakdown,
+            show_agent_breakdown=data.show_agent_breakdown,
         )
 
     def format_active_session_screen(
@@ -175,12 +258,18 @@ class SessionDisplayComponent:
             show_exceed_notification: Show exceed limit notification
             show_tokens_will_run_out: Show token depletion warning
             original_limit: Original plan limit
+            agent_breakdown: Optional[dict] - Agent breakdown data (default None)
+            show_agent_breakdown: bool - Whether to show agent breakdown (default False)
 
         Returns:
             List of formatted screen lines
         """
 
         screen_buffer = []
+
+        # Extract agent breakdown settings from kwargs
+        agent_breakdown = kwargs.get("agent_breakdown", {})
+        show_agent_breakdown = kwargs.get("show_agent_breakdown", False)
 
         header_manager = HeaderManager()
         screen_buffer.extend(header_manager.create_header(plan, timezone))
@@ -251,6 +340,12 @@ class SessionDisplayComponent:
                 screen_buffer.append(f"🤖 [value]Model Distribution:[/]   {model_bar}")
             screen_buffer.append(f"[separator]{'─' * 60}[/]")
 
+            # Add agent breakdown if enabled
+            if show_agent_breakdown and agent_breakdown:
+                screen_buffer.extend(
+                    self._render_agent_breakdown_section(agent_breakdown, indent="")
+                )
+
             velocity_emoji = VelocityIndicator.get_velocity_emoji(burn_rate)
             screen_buffer.append(
                 f"🔥 [value]Burn Rate:[/]              [warning]{burn_rate:.1f}[/] [dim]tokens/min[/] {velocity_emoji}"
@@ -299,6 +394,12 @@ class SessionDisplayComponent:
             if per_model_stats:
                 model_bar = self.model_usage.render(per_model_stats)
                 screen_buffer.append(f"🤖 [value]Model Usage:[/]    {model_bar}")
+
+            # Add agent breakdown if enabled
+            if show_agent_breakdown and agent_breakdown:
+                screen_buffer.extend(
+                    self._render_agent_breakdown_section(agent_breakdown, indent="")
+                )
 
             screen_buffer.append("")
 

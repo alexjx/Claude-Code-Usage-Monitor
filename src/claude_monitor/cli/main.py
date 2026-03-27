@@ -413,6 +413,8 @@ def _run_table_view(
             timezone=args.timezone,
             plan=args.plan,
             token_limit=_get_initial_token_limit(args, data_path),
+            show_agent_breakdown=getattr(args, "show_agent_breakdown", False),
+            dedupe_mode=getattr(args, "dedupe_mode", "message-id-max"),
         )
 
         # Wait for user to press Ctrl+C

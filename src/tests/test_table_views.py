@@ -535,3 +535,26 @@ class TestTableViewsController:
         # Monthly table with empty data
         monthly_table = controller.create_monthly_table([], empty_totals, "UTC")
         assert monthly_table.row_count == 2  # Separator + totals
+
+    def test_create_calib_disclosure_legacy_mode(
+        self, controller: TableViewsController
+    ) -> None:
+        """Test creation of calibration disclosure for legacy mode."""
+        panel = controller._create_calib_disclosure("legacy")
+
+        assert isinstance(panel, Panel)
+        assert panel.title == "⚠️ 口径说明"
+        assert panel.border_style == controller.warning_style
+        assert panel.expand is False
+        assert panel.padding == (1, 2)
+
+    def test_create_calib_disclosure_unknown_mode(
+        self, controller: TableViewsController
+    ) -> None:
+        """Test creation of calibration disclosure for unknown mode."""
+        panel = controller._create_calib_disclosure("unknown-mode")
+
+        assert isinstance(panel, Panel)
+        assert panel.title == "⚠️ 口径说明"
+        # Should contain the mode name in the message
+        assert "unknown-mode" in str(panel.renderable)

@@ -440,6 +440,42 @@ class TableViewsController:
 
         return panel
 
+    def _create_calib_disclosure(self, dedupe_mode: str) -> Panel:
+        """Create "口径说明" (calibration disclosure) panel when dedupe-mode changed.
+
+        Args:
+            dedupe_mode: Current dedupe mode being used
+
+        Returns:
+            Rich Panel object with calibration disclosure
+        """
+        if dedupe_mode == "legacy":
+            message = (
+                "[yellow]⚠️ 口径说明:[/yellow] 当前使用 'legacy' 去重模式。\n"
+                "[dim]Legacy 模式使用 message_id+request_id 进行去重，"
+                "可能与默认的 'message-id-max' 模式（保留 usage-max 快照）有不同的统计算法。\n"
+                "这可能导致与标准视图的统计数据存在差异。[/dim]"
+            )
+        else:
+            message = (
+                f"[yellow]⚠️ 口径说明:[/yellow] 当前使用 '{dedupe_mode}' 去重模式。\n"
+                "[dim]该模式可能与默认的 'message-id-max' 模式有不同的统计算法。\n"
+                "这可能导致与标准视图的统计数据存在差异。[/dim]"
+            )
+
+        text = Text(message, style=self.value_style)
+
+        panel = Panel(
+            Align.center(text, vertical="middle"),
+            title="⚠️ 口径说明",
+            title_align="center",
+            border_style=self.warning_style,
+            expand=False,
+            padding=(1, 2),
+        )
+
+        return panel
+
     def create_aggregate_table(
         self,
         aggregate_data: Union[List[Dict[str, Any]], List[Dict[str, Any]]],
@@ -476,6 +512,8 @@ class TableViewsController:
         plan: str,
         token_limit: int,
         console: Optional[Console] = None,
+        show_agent_breakdown: bool = False,
+        dedupe_mode: str = "message-id-max",
     ) -> None:
         """Display aggregated view with table and summary.
 
@@ -486,6 +524,8 @@ class TableViewsController:
             plan: Plan type
             token_limit: Token limit for the plan
             console: Optional Console instance
+            show_agent_breakdown: Whether to show agent breakdown (default False)
+            dedupe_mode: Deduplication mode (default 'message-id-max')
         """
         if not data:
             no_data_display = self.create_no_data_display(view_mode)
@@ -526,12 +566,22 @@ class TableViewsController:
 
         # Display using console if provided
         if console:
+            # Show "口径说明" disclosure if dedupe_mode is not default
+            if dedupe_mode != "message-id-max":
+                calib_panel = self._create_calib_disclosure(dedupe_mode)
+                console.print(calib_panel)
+                console.print()
             console.print(summary_panel)
             console.print()
             console.print(table)
         else:
             from rich import print as rprint
 
+            # Show "口径说明" disclosure if dedupe_mode is not default
+            if dedupe_mode != "message-id-max":
+                calib_panel = self._create_calib_disclosure(dedupe_mode)
+                rprint(calib_panel)
+                rprint()
             rprint(summary_panel)
             rprint()
             rprint(table)

@@ -184,6 +184,21 @@ class Settings(BaseSettings):
         description="Deduplication mode: 'message-id-max' keeps usage-max snapshot for same message.id; 'legacy' uses message_id+request_id",
     )
 
+    include_subagents: bool = Field(
+        default=True,
+        description="Include subagent usage data (default true). Set to false to filter out subagent entries.",
+    )
+
+    show_agent_breakdown: bool = Field(
+        default=False,
+        description="Show agent breakdown in realtime view (default off). When enabled, displays usage breakdown by agent (primary_agent, subagent).",
+    )
+
+    count_progress_usage: Literal["off", "fallback", "strict"] = Field(
+        default="off",
+        description="How to count progress/working events: 'off'=don't count progress usage, 'fallback'=count only if explicit usage data exists, 'strict'=always count progress events (may overcount). Default is 'off' for backward compatibility.",
+    )
+
     @field_validator("plan", mode="before")
     @classmethod
     def validate_plan(cls, v: Any) -> str:
@@ -265,6 +280,20 @@ class Settings(BaseSettings):
                 return v_lower
             raise ValueError(
                 f"Invalid dedupe_mode: {v}. Must be one of: {', '.join(valid_modes)}"
+            )
+        return v
+
+    @field_validator("count_progress_usage", mode="before")
+    @classmethod
+    def validate_count_progress_usage(cls, v: Any) -> str:
+        """Validate and normalize count_progress_usage value."""
+        if isinstance(v, str):
+            v_lower = v.lower()
+            valid_modes = ["off", "fallback", "strict"]
+            if v_lower in valid_modes:
+                return v_lower
+            raise ValueError(
+                f"Invalid count_progress_usage: {v}. Must be one of: {', '.join(valid_modes)}"
             )
         return v
 
@@ -380,5 +409,8 @@ class Settings(BaseSettings):
         args.log_file = str(self.log_file) if self.log_file else None
         args.version = self.version
         args.dedupe_mode = self.dedupe_mode
+        args.include_subagents = self.include_subagents
+        args.show_agent_breakdown = self.show_agent_breakdown
+        args.count_progress_usage = self.count_progress_usage
 
         return args
