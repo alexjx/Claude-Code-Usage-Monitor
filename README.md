@@ -188,7 +188,7 @@ claude-monitor --help
 |-----------|------|---------|-------------|
 | --plan | string | custom | Plan type: pro, max5, max20, or custom |
 | --custom-limit-tokens | int | None | Token limit for custom plan (must be > 0) |
-| --view | string | realtime | View type: realtime, daily, or monthly |
+| --view | string | realtime | View type: realtime, daily, monthly, or session |
 | --timezone | string | auto | Timezone (auto-detected). Examples: UTC, America/New_York, Europe/London |
 | --time-format | string | auto | Time format: 12h, 24h, or auto |
 | --theme | string | auto | Display theme: light, dark, classic, or auto |
@@ -200,6 +200,11 @@ claude-monitor --help
 | --debug | flag | False | Enable debug logging |
 | --version, -v | flag | False | Show version information |
 | --clear | flag | False | Clear saved configuration |
+| --dedupe-mode | string | message-id-max | Deduplication mode: message-id-max (recommended) or legacy |
+| --include-subagents | bool | true | Include subagent usage data (false to filter out) |
+| --show-agent-breakdown | flag | False | Show usage breakdown by agent type |
+| --count-progress-usage | string | off | How to count progress events: off, fallback, or strict |
+| --model-filter | string | None | Filter usage by model keyword(s), comma or space separated |
 
 #### Plan Options
 
@@ -416,6 +421,40 @@ claude-monitor --log-level WARNING  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 - Default plan changed from pro to custom (with auto-detection)
 - Minimum Python version increased to 3.9+
 - Command structure updated (see examples above)
+
+
+## 🚀 What's New in v3.2.0
+
+### Improved Billing Accuracy
+
+#### **New Deduplication Algorithm (message-id-max)**
+- **Default mode changed** from legacy to `message-id-max` for improved accuracy
+- Multi-segment messages (long responses spanning multiple API calls) are now correctly deduplicated
+- Modern Claude logs without `request_id` are now properly handled
+
+#### **Agent Attribution**
+- **Subagent filtering**: Use `--include-subagents false` to exclude subagent usage
+- **Agent breakdown**: Use `--show-agent-breakdown` to see usage by agent type
+
+#### **Event-type Processing**
+- **Progress events**: Use `--count-progress-usage` to control how progress/working events are counted
+  - `off` (default): Ignores progress events (recommended)
+  - `fallback`: Counts progress only if no assistant event exists
+  - `strict`: Always counts progress events
+
+#### **New CLI Options**
+- `--dedupe-mode`: Choose deduplication strategy (`message-id-max` or `legacy`)
+- `--include-subagents`: Include/exclude subagent usage (default: true)
+- `--show-agent-breakdown`: Show usage breakdown by agent type
+- `--count-progress-usage`: Control progress event counting (`off`, `fallback`, `strict`)
+- `--model-filter`: Filter usage by model keyword(s)
+
+#### **Migration Notes**
+If you see lower numbers after upgrading, this is expected. The new `message-id-max` mode corrects overcounting from multi-segment messages. To temporarily use old behavior:
+```bash
+claude-monitor --dedupe-mode legacy --view daily
+```
+**Note**: Legacy mode is not recommended as it has known overcounting issues.
 
 
 ## ✨ Features & How It Works
