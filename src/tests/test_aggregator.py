@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from typing import List
+from unittest.mock import patch
 
 import pytest
 
@@ -620,3 +621,42 @@ class TestUsageAggregator:
         assert monthly_result[0]["month"] == "2024-01"
         assert monthly_result[1]["month"] == "2024-02"
         assert monthly_result[2]["month"] == "2024-03"
+
+    def test_filter_entries_by_model_keyword(
+        self, aggregator: UsageAggregator, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test model filtering with a single keyword."""
+        filtered = aggregator._filter_entries_by_model(sample_entries, "haiku")
+        assert filtered
+        assert all(entry.model and "haiku" in entry.model for entry in filtered)
+
+    def test_filter_entries_by_model_multiple_keywords(
+        self, aggregator: UsageAggregator, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test model filtering with multiple keywords (OR match)."""
+        filtered = aggregator._filter_entries_by_model(sample_entries, "sonnet, opus")
+        assert filtered
+        assert all(
+            entry.model and ("sonnet" in entry.model or "opus" in entry.model)
+            for entry in filtered
+        )
+
+    def test_aggregate_applies_model_filter(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() applies model_filter before aggregation."""
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            model_filter="opus",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ):
+            result = aggregator.aggregate()
+
+        assert len(result) == 3
+        for day in result:
+            assert day["models_used"] == ["claude-3-opus"]

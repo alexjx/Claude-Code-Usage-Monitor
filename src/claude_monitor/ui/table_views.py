@@ -85,7 +85,11 @@ class TableViewsController:
         return table
 
     def _add_data_rows(
-        self, table: Table, data_list: List[Dict[str, Any]], period_key: str
+        self,
+        table: Table,
+        data_list: List[Dict[str, Any]],
+        period_key: str,
+        include_model_analysis: bool = False,
     ) -> None:
         """Add data rows to the table.
 
@@ -95,23 +99,45 @@ class TableViewsController:
             period_key: Key to use for period column ('date' or 'month')
         """
         for data in data_list:
-            models_text = self._format_models(data["models_used"])
             total_tokens = (
                 data["input_tokens"]
                 + data["output_tokens"]
                 + data["cache_creation_tokens"]
                 + data["cache_read_tokens"]
             )
+            models_text = self._format_models(data["models_used"])
+            input_text = format_number(data["input_tokens"])
+            output_text = format_number(data["output_tokens"])
+            cache_create_text = format_number(data["cache_creation_tokens"])
+            cache_read_text = format_number(data["cache_read_tokens"])
+            total_tokens_text = format_number(total_tokens)
+            cost_text = format_currency(data["total_cost"])
+
+            if include_model_analysis:
+                model_analysis = self._format_model_analysis(
+                    data.get("models_used", []),
+                    data.get("model_breakdowns", {}),
+                    data,
+                    total_tokens,
+                    data.get("total_cost", 0.0),
+                )
+                models_text = model_analysis["models"]
+                input_text = model_analysis["input"]
+                output_text = model_analysis["output"]
+                cache_create_text = model_analysis["cache_create"]
+                cache_read_text = model_analysis["cache_read"]
+                total_tokens_text = model_analysis["total_tokens"]
+                cost_text = model_analysis["cost"]
 
             table.add_row(
                 data[period_key],
                 models_text,
-                format_number(data["input_tokens"]),
-                format_number(data["output_tokens"]),
-                format_number(data["cache_creation_tokens"]),
-                format_number(data["cache_read_tokens"]),
-                format_number(total_tokens),
-                format_currency(data["total_cost"]),
+                input_text,
+                output_text,
+                cache_create_text,
+                cache_read_text,
+                total_tokens_text,
+                cost_text,
             )
 
     def _add_totals_row(self, table: Table, totals: Dict[str, Any]) -> None:
@@ -162,7 +188,12 @@ class TableViewsController:
         )
 
         # Add data rows
-        self._add_data_rows(table, daily_data, "date")
+        self._add_data_rows(
+            table,
+            daily_data,
+            "date",
+            include_model_analysis=True,
+        )
 
         # Add totals
         self._add_totals_row(table, totals)
@@ -260,6 +291,128 @@ class TableViewsController:
             formatted = "\n".join([f"• {model}" for model in first_two])
             formatted += f"\n• ...and {remaining_count} more"
             return formatted
+
+    def _format_model_analysis(
+        self,
+        models: List[str],
+        model_breakdowns: Dict[str, Dict[str, Any]],
+        period_data: Dict[str, Any],
+        period_total_tokens: int,
+        period_total_cost: float,
+    ) -> Dict[str, str]:
+        """Format per-model per-column details for daily rows."""
+        if not models:
+            return {
+                "models": "No models",
+                "input": format_number(period_data.get("input_tokens", 0)),
+                "output": format_number(period_data.get("output_tokens", 0)),
+                "cache_create": format_number(
+                    period_data.get("cache_creation_tokens", 0)
+                ),
+                "cache_read": format_number(period_data.get("cache_read_tokens", 0)),
+                "total_tokens": format_number(period_total_tokens),
+                "cost": format_currency(period_total_cost),
+            }
+
+        model_totals: List[Dict[str, Any]] = []
+        for model in models:
+            breakdown = model_breakdowns.get(model, {})
+            input_tokens = breakdown.get("input_tokens", 0)
+            output_tokens = breakdown.get("output_tokens", 0)
+            cache_creation_tokens = breakdown.get("cache_creation_tokens", 0)
+            cache_read_tokens = breakdown.get("cache_read_tokens", 0)
+            model_tokens = (
+                input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
+            )
+            model_cost = breakdown.get("cost", 0.0)
+            model_totals.append(
+                {
+                    "model": model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cache_creation_tokens": cache_creation_tokens,
+                    "cache_read_tokens": cache_read_tokens,
+                    "tokens": model_tokens,
+                    "cost": model_cost,
+                }
+            )
+
+        model_totals.sort(key=lambda item: (-item["tokens"], item["model"]))
+
+        models_lines = []
+        input_lines = []
+        output_lines = []
+        cache_create_lines = []
+        cache_read_lines = []
+        total_tokens_lines = []
+        cost_lines = []
+        for item in model_totals:
+            total_token_pct = (
+                (item["tokens"] / period_total_tokens * 100.0)
+                if period_total_tokens > 0
+                else 0.0
+            )
+            cost_pct = (
+                (item["cost"] / period_total_cost * 100.0)
+                if period_total_cost > 0
+                else 0.0
+            )
+            input_pct = (
+                (item["input_tokens"] / period_data.get("input_tokens", 0) * 100.0)
+                if period_data.get("input_tokens", 0) > 0
+                else 0.0
+            )
+            output_pct = (
+                (item["output_tokens"] / period_data.get("output_tokens", 0) * 100.0)
+                if period_data.get("output_tokens", 0) > 0
+                else 0.0
+            )
+            cache_create_pct = (
+                (
+                    item["cache_creation_tokens"]
+                    / period_data.get("cache_creation_tokens", 0)
+                    * 100.0
+                )
+                if period_data.get("cache_creation_tokens", 0) > 0
+                else 0.0
+            )
+            cache_read_pct = (
+                (
+                    item["cache_read_tokens"]
+                    / period_data.get("cache_read_tokens", 0)
+                    * 100.0
+                )
+                if period_data.get("cache_read_tokens", 0) > 0
+                else 0.0
+            )
+
+            models_lines.append(f"• {item['model']}")
+            input_lines.append(
+                f"{format_number(item['input_tokens'])} ({input_pct:.1f}%)"
+            )
+            output_lines.append(
+                f"{format_number(item['output_tokens'])} ({output_pct:.1f}%)"
+            )
+            cache_create_lines.append(
+                f"{format_number(item['cache_creation_tokens'])} ({cache_create_pct:.1f}%)"
+            )
+            cache_read_lines.append(
+                f"{format_number(item['cache_read_tokens'])} ({cache_read_pct:.1f}%)"
+            )
+            total_tokens_lines.append(
+                f"{format_number(item['tokens'])} ({total_token_pct:.1f}%)"
+            )
+            cost_lines.append(f"{format_currency(item['cost'])} ({cost_pct:.1f}%)")
+
+        return {
+            "models": "\n".join(models_lines),
+            "input": "\n".join(input_lines),
+            "output": "\n".join(output_lines),
+            "cache_create": "\n".join(cache_create_lines),
+            "cache_read": "\n".join(cache_read_lines),
+            "total_tokens": "\n".join(total_tokens_lines),
+            "cost": "\n".join(cost_lines),
+        }
 
     def create_no_data_display(self, view_type: str) -> Panel:
         """Create a display for when no data is available.

@@ -128,3 +128,48 @@ class TestFunctions:
             paths = discover_claude_data_paths(custom_paths)
             assert len(paths) == 1
             assert paths[0].name == "path"
+
+    def test_run_table_view_passes_model_filter(self) -> None:
+        """Test table view wiring passes model_filter to UsageAggregator."""
+        from claude_monitor.cli.main import _run_table_view
+
+        args = Mock()
+        args.timezone = "UTC"
+        args.plan = "pro"
+        args.model_filter = "haiku"
+
+        with (
+            patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
+            patch(
+                "claude_monitor.cli.main.TableViewsController"
+            ) as mock_controller_cls,
+            patch(
+                "claude_monitor.cli.main._get_initial_token_limit", return_value=1000
+            ),
+            patch("claude_monitor.cli.main.print_themed"),
+            patch("signal.pause", side_effect=KeyboardInterrupt()),
+        ):
+            mock_aggregator = mock_aggregator_cls.return_value
+            mock_aggregator.aggregate.return_value = [
+                {
+                    "date": "2024-01-01",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_cost": 0.0,
+                    "models_used": ["claude-3-haiku"],
+                    "model_breakdowns": {},
+                    "entries_count": 1,
+                }
+            ]
+
+            _run_table_view(args, Path("/tmp"), "daily", Mock())
+
+            mock_aggregator_cls.assert_called_once_with(
+                data_path="/tmp",
+                aggregation_mode="daily",
+                timezone="UTC",
+                model_filter="haiku",
+            )
+            mock_controller_cls.return_value.display_aggregated_view.assert_called_once()

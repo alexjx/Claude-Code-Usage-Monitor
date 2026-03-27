@@ -39,6 +39,8 @@ class LastUsedParams:
 
             if settings.custom_limit_tokens:
                 params["custom_limit_tokens"] = settings.custom_limit_tokens
+            if settings.model_filter:
+                params["model_filter"] = settings.model_filter
 
             self.config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -140,6 +142,13 @@ class Settings(BaseSettings):
 
     custom_limit_tokens: Optional[int] = Field(
         default=None, gt=0, description="Token limit for custom plan"
+    )
+    model_filter: Optional[str] = Field(
+        default=None,
+        description=(
+            "Filter usage by model keyword(s). Case-insensitive substring match; "
+            "supports comma or space separated terms."
+        ),
     )
 
     refresh_rate: int = Field(
@@ -346,6 +355,7 @@ class Settings(BaseSettings):
         args.refresh_per_second = self.refresh_per_second
         args.reset_hour = self.reset_hour
         args.custom_limit_tokens = self.custom_limit_tokens
+        args.model_filter = self.model_filter
         args.time_format = self.time_format
         args.log_level = self.log_level
         args.log_file = str(self.log_file) if self.log_file else None

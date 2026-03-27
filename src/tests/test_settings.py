@@ -54,6 +54,7 @@ class TestLastUsedParams:
                 "refresh_rate": 5,
                 "reset_hour": 12,
                 "custom_limit_tokens": 1000,
+                "model_filter": "haiku",
                 "view": "realtime",
             },
         )()
@@ -75,6 +76,7 @@ class TestLastUsedParams:
         assert data["refresh_rate"] == 5
         assert data["reset_hour"] == 12
         assert data["custom_limit_tokens"] == 1000
+        assert data["model_filter"] == "haiku"
         assert data["view"] == "realtime"
         assert "timestamp" in data
 
@@ -91,6 +93,7 @@ class TestLastUsedParams:
                 "refresh_rate": 10,
                 "reset_hour": None,
                 "custom_limit_tokens": None,
+                "model_filter": None,
                 "view": "realtime",
             },
         )()
@@ -101,6 +104,7 @@ class TestLastUsedParams:
             data = json.load(f)
 
         assert "custom_limit_tokens" not in data
+        assert "model_filter" not in data
         assert data["theme"] == "light"
 
     def test_save_creates_directory(self) -> None:
@@ -120,6 +124,7 @@ class TestLastUsedParams:
                 "refresh_rate": 5,
                 "reset_hour": 12,
                 "custom_limit_tokens": None,
+                "model_filter": None,
                 "view": "realtime",
             },
         )()
@@ -142,6 +147,7 @@ class TestLastUsedParams:
             mock_settings.refresh_rate = 5
             mock_settings.reset_hour = 12
             mock_settings.custom_limit_tokens = None
+            mock_settings.model_filter = None
             mock_settings.view = "realtime"
 
             # Should not raise exception
@@ -162,6 +168,7 @@ class TestLastUsedParams:
             "custom_limit_tokens": 2000,
             "timestamp": "2024-01-01T12:00:00",
             "view": "realtime",
+            "model_filter": "opus",
         }
 
         with open(self.last_used.params_file, "w") as f:
@@ -178,6 +185,7 @@ class TestLastUsedParams:
         assert result["refresh_rate"] == 5
         assert result["reset_hour"] == 8
         assert result["custom_limit_tokens"] == 2000
+        assert result["model_filter"] == "opus"
 
     def test_load_file_not_exists(self) -> None:
         """Test loading when file doesn't exist."""
@@ -250,6 +258,7 @@ class TestSettings:
         assert settings.time_format == "auto"
         assert settings.theme == "auto"
         assert settings.custom_limit_tokens is None
+        assert settings.model_filter is None
         assert settings.refresh_rate == 10
         assert settings.refresh_per_second == 0.75
         assert settings.reset_hour is None
@@ -583,6 +592,7 @@ class TestSettings:
             refresh_per_second=1.0,
             reset_hour=8,
             custom_limit_tokens=1000,
+            model_filter="haiku",
             time_format="24h",
             log_level="DEBUG",
             log_file=Path("/tmp/test.log"),
@@ -600,6 +610,7 @@ class TestSettings:
         assert namespace.refresh_per_second == 1.0
         assert namespace.reset_hour == 8
         assert namespace.custom_limit_tokens == 1000
+        assert namespace.model_filter == "haiku"
         assert namespace.time_format == "24h"
         assert namespace.log_level == "DEBUG"
         assert namespace.log_file == "/tmp/test.log"
@@ -613,6 +624,7 @@ class TestSettings:
         assert namespace.log_file is None
         assert namespace.reset_hour is None
         assert namespace.custom_limit_tokens is None
+        assert namespace.model_filter is None
 
 
 class TestSettingsIntegration:

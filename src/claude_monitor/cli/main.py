@@ -390,6 +390,7 @@ def _run_table_view(
             data_path=str(data_path),
             aggregation_mode=view_mode,
             timezone=args.timezone,
+            model_filter=getattr(args, "model_filter", None),
         )
 
         # Create table controller

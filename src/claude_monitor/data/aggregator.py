@@ -5,6 +5,7 @@ by day and month, similar to ccusage's functionality.
 """
 
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -93,7 +94,11 @@ class UsageAggregator:
     """Aggregates usage data for daily and monthly reports."""
 
     def __init__(
-        self, data_path: str, aggregation_mode: str = "daily", timezone: str = "UTC"
+        self,
+        data_path: str,
+        aggregation_mode: str = "daily",
+        timezone: str = "UTC",
+        model_filter: Optional[str] = None,
     ):
         """Initialize the aggregator.
 
@@ -101,11 +106,42 @@ class UsageAggregator:
             data_path: Path to the data directory
             aggregation_mode: Mode of aggregation ('daily' or 'monthly')
             timezone: Timezone string for date formatting
+            model_filter: Optional model keyword filter (comma/space separated)
         """
         self.data_path = data_path
         self.aggregation_mode = aggregation_mode
         self.timezone = timezone
+        self.model_filter = model_filter
         self.timezone_handler = TimezoneHandler()
+
+    def _parse_model_filter_terms(self, model_filter: Optional[str]) -> List[str]:
+        """Parse model filter string into normalized terms."""
+        if not model_filter:
+            return []
+
+        return [
+            part.lower()
+            for part in re.split(r"[\s,]+", model_filter.strip())
+            if part.strip()
+        ]
+
+    def _filter_entries_by_model(
+        self, entries: List[UsageEntry], model_filter: Optional[str]
+    ) -> List[UsageEntry]:
+        """Filter entries by model keyword(s) using case-insensitive OR matching."""
+        terms = self._parse_model_filter_terms(model_filter)
+        if not terms:
+            return entries
+
+        filtered: List[UsageEntry] = []
+        for entry in entries:
+            model_name = normalize_model_name(entry.model) if entry.model else "unknown"
+            model_name = model_name.lower()
+
+            if any(term in model_name for term in terms):
+                filtered.append(entry)
+
+        return filtered
 
     def _aggregate_by_period(
         self,
@@ -287,6 +323,14 @@ class UsageAggregator:
         for entry in entries:
             if entry.timestamp.tzinfo is None:
                 entry.timestamp = self.timezone_handler.ensure_timezone(entry.timestamp)
+
+        # Apply optional model filter
+        entries = self._filter_entries_by_model(entries, self.model_filter)
+        if not entries:
+            logger.warning(
+                "No usage entries matched model filter: %s", self.model_filter
+            )
+            return []
 
         # Aggregate based on mode
         if self.aggregation_mode == "daily":

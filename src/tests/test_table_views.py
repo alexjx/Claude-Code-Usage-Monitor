@@ -282,6 +282,62 @@ class TestTableViewsController:
         result = controller._format_models([])
         assert result == "No models"
 
+    def test_format_model_analysis(self, controller: TableViewsController) -> None:
+        """Test daily per-model analysis formatting."""
+        result = controller._format_model_analysis(
+            ["claude-3-haiku", "claude-3-sonnet"],
+            {
+                "claude-3-haiku": {
+                    "input_tokens": 600,
+                    "output_tokens": 300,
+                    "cache_creation_tokens": 60,
+                    "cache_read_tokens": 30,
+                    "cost": 0.03,
+                },
+                "claude-3-sonnet": {
+                    "input_tokens": 400,
+                    "output_tokens": 200,
+                    "cache_creation_tokens": 40,
+                    "cache_read_tokens": 20,
+                    "cost": 0.02,
+                },
+            },
+            {
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "cache_creation_tokens": 100,
+                "cache_read_tokens": 50,
+            },
+            1650,
+            0.05,
+        )
+        assert result["models"] == "• claude-3-haiku\n• claude-3-sonnet"
+        assert result["input"] == "600 (60.0%)\n400 (40.0%)"
+        assert result["output"] == "300 (60.0%)\n200 (40.0%)"
+        assert result["cache_create"] == "60 (60.0%)\n40 (40.0%)"
+        assert result["cache_read"] == "30 (60.0%)\n20 (40.0%)"
+        assert result["total_tokens"] == "990 (60.0%)\n660 (40.0%)"
+        assert result["cost"] == "$0.03 (60.0%)\n$0.02 (40.0%)"
+
+    def test_create_daily_table_includes_per_model_analysis(
+        self,
+        controller: TableViewsController,
+        sample_daily_data: List[Dict[str, Any]],
+        sample_totals: Dict[str, Any],
+    ) -> None:
+        """Test daily table includes model analysis text in Models column."""
+        table = controller.create_daily_table(sample_daily_data, sample_totals, "UTC")
+
+        first_models_cell = table.columns[1]._cells[0]
+        first_input_cell = table.columns[2]._cells[0]
+        first_output_cell = table.columns[3]._cells[0]
+        first_cost_cell = table.columns[7]._cells[0]
+
+        assert first_models_cell == "• claude-3-haiku\n• claude-3-sonnet"
+        assert first_input_cell == "600 (60.0%)\n400 (40.0%)"
+        assert first_output_cell == "300 (60.0%)\n200 (40.0%)"
+        assert first_cost_cell == "$0.03 (60.0%)\n$0.02 (40.0%)"
+
     def test_create_no_data_display(self, controller: TableViewsController) -> None:
         """Test creation of no data display."""
         panel = controller.create_no_data_display("daily")
