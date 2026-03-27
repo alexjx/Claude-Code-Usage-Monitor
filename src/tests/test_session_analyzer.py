@@ -792,3 +792,222 @@ class TestAgentBreakdown:
             + block.token_counts.cache_creation_tokens + block.token_counts.cache_read_tokens
         )
         assert total_from_breakdown == total_from_block
+
+
+class TestApiErrorDetection:
+    """Test cases for system.api_error detection with structured retry info."""
+
+    def test_detect_api_error_with_retry_info(self) -> None:
+        """Test _detect_single_limit detects api_error with retryInMs and maxRetries."""
+        analyzer = SessionAnalyzer()
+
+        raw_data: Dict[str, Any] = {
+            "timestamp": "2024-01-15T10:00:00Z",
+            "type": "system",
+            "detail": {
+                "type": "api_error",
+                "message": "Rate limit exceeded",
+                "retryInMs": 5000,
+                "maxRetries": 3,
+                "retryAttempt": 1,
+            },
+        }
+
+        result = analyzer._detect_single_limit(raw_data)
+
+        assert result is not None
+        assert result["type"] == "api_error"
+        assert result["content"] == "Rate limit exceeded"
+        assert result["retry_in_ms"] == 5000
+        assert result["max_retries"] == 3
+        assert result["retry_attempt"] == 1
+
+    def test_detect_api_error_without_retry_info(self) -> None:
+        """Test api_error without retry info returns None."""
+        analyzer = SessionAnalyzer()
+
+        raw_data: Dict[str, Any] = {
+            "timestamp": "2024-01-15T10:00:00Z",
+            "type": "system",
+            "detail": {
+                "type": "api_error",
+                "message": "Some other error",
+            },
+        }
+
+        result = analyzer._detect_single_limit(raw_data)
+
+        # Without retry info, should not be detected as limit
+        assert result is None
+
+    def test_detect_api_error_partial_retry_info(self) -> None:
+        """Test api_error with only retryInMs detected."""
+        analyzer = SessionAnalyzer()
+
+        raw_data: Dict[str, Any] = {
+            "timestamp": "2024-01-15T10:00:00Z",
+            "type": "system",
+            "detail": {
+                "type": "api_error",
+                "message": "Rate limit",
+                "retryInMs": 10000,
+            },
+        }
+
+        result = analyzer._detect_single_limit(raw_data)
+
+        assert result is not None
+        assert result["type"] == "api_error"
+        assert result["retry_in_ms"] == 10000
+        assert result["max_retries"] is None
+
+    def test_detect_limits_with_api_error_events(self) -> None:
+        """Test detect_limits finds api_error events in mixed entries."""
+        analyzer = SessionAnalyzer()
+
+        raw_entries: List[Dict[str, Any]] = [
+            {
+                "timestamp": "2024-01-15T10:00:00Z",
+                "type": "assistant",
+                "message": {
+                    "id": "msg_001",
+                    "model": "claude-3-sonnet",
+                    "usage": {"input_tokens": 150, "output_tokens": 75},
+                },
+            },
+            {
+                "timestamp": "2024-01-15T10:01:00Z",
+                "type": "system",
+                "detail": {
+                    "type": "api_error",
+                    "message": "Rate limit exceeded",
+                    "retryInMs": 5000,
+                    "maxRetries": 3,
+                },
+            },
+        ]
+
+        limits = analyzer.detect_limits(raw_entries)
+
+        assert len(limits) == 1
+        assert limits[0]["type"] == "api_error"
+        assert limits[0]["retry_in_ms"] == 5000
+        assert limits[0]["max_retries"] == 3
+
+
+class TestToolResultRateLimitDetection:
+    """Test cases for tool_result with rate-limit text detection."""
+
+    def test_detect_tool_result_with_rate_limit_text(self) -> None:
+        """Test _detect_single_limit detects tool_result with rate-limit text."""
+        analyzer = SessionAnalyzer()
+
+        raw_data: Dict[str, Any] = {
+            "timestamp": "2024-01-15T10:00:00Z",
+            "type": "user",
+            "message": {
+                "id": "msg_user_001",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Tool execution hit rate limit, please retry",
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+
+        result = analyzer._detect_single_limit(raw_data)
+
+        assert result is not None
+        assert result["type"] == "general_limit"
+        assert "rate limit" in result["content"].lower()
+
+    def test_detect_tool_result_with_limit_reached_text(self) -> None:
+        """Test tool_result with 'limit reached' text still works."""
+        analyzer = SessionAnalyzer()
+
+        raw_data: Dict[str, Any] = {
+            "timestamp": "2024-01-15T10:00:00Z",
+            "type": "user",
+            "message": {
+                "id": "msg_user_001",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Rate limit reached|1234567890",
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+
+        result = analyzer._detect_single_limit(raw_data)
+
+        assert result is not None
+        assert result["type"] == "general_limit"
+
+    def test_detect_limits_with_mixed_event_types(self) -> None:
+        """Test detect_limits processes mixed event types correctly."""
+        analyzer = SessionAnalyzer()
+
+        raw_entries: List[Dict[str, Any]] = [
+            {
+                "timestamp": "2024-01-15T10:00:00Z",
+                "type": "assistant",
+                "message": {
+                    "id": "msg_001",
+                    "model": "claude-3-sonnet",
+                    "usage": {"input_tokens": 150, "output_tokens": 75},
+                },
+            },
+            {
+                "timestamp": "2024-01-15T10:01:00Z",
+                "type": "system",
+                "detail": {
+                    "type": "api_error",
+                    "message": "Rate limit",
+                    "retryInMs": 5000,
+                },
+            },
+            {
+                "timestamp": "2024-01-15T10:02:00Z",
+                "type": "user",
+                "message": {
+                    "id": "msg_user_001",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Hit rate limit, please wait",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            },
+            {
+                "timestamp": "2024-01-15T10:03:00Z",
+                "type": "progress",
+                "subtype": "agent_progress",
+                "message": "Processing",
+            },
+        ]
+
+        limits = analyzer.detect_limits(raw_entries)
+
+        # Should find api_error and tool_result, but not progress
+        assert len(limits) == 2
+        limit_types = [l["type"] for l in limits]
+        assert "api_error" in limit_types
+        assert "general_limit" in limit_types
