@@ -216,3 +216,6 @@ logs/
 # Local linting scripts
 lint*.py
 lint*.sh
+
+# Worktrees
+.worktrees/
