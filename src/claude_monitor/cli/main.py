@@ -384,6 +384,23 @@ def _run_table_view(
     """Run table view mode (daily/monthly)."""
     logger = logging.getLogger(__name__)
 
+    # Extract time filter params
+    last_days = getattr(args, "last_days", None)
+    start_date = getattr(args, "start_date", None)
+    end_date = getattr(args, "end_date", None)
+
+    # Construct period label
+    if last_days is not None:
+        period_label = f"Last {last_days} days"
+    elif start_date is not None and end_date is not None:
+        period_label = f"{start_date} to {end_date}"
+    elif start_date is not None:
+        period_label = f"From {start_date}"
+    elif end_date is not None:
+        period_label = f"Until {end_date}"
+    else:
+        period_label = None
+
     try:
         # Create aggregator with appropriate mode
         aggregator = UsageAggregator(
@@ -391,6 +408,9 @@ def _run_table_view(
             aggregation_mode=view_mode,
             timezone=args.timezone,
             model_filter=getattr(args, "model_filter", None),
+            last_days=last_days,
+            start_date=start_date,
+            end_date=end_date,
         )
 
         # Create table controller
@@ -411,6 +431,7 @@ def _run_table_view(
             timezone=args.timezone,
             plan=args.plan,
             token_limit=_get_initial_token_limit(args, data_path),
+            period_label=period_label,
         )
 
         # Wait for user to press Ctrl+C
