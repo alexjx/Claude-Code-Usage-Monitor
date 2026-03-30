@@ -1094,7 +1094,8 @@ class TestPerformanceAndEdgeCases:
 
                 # Verify include_raw=False was passed to _process_single_file
                 call_args = mock_process.call_args[0]
-                assert call_args[4] is False  # include_raw parameter
+                # New signature: file_path, mode, cutoff_time, dedupe_mode, dedupe_tracker, include_raw, timezone_handler, pricing_calculator
+                assert call_args[5] is False  # include_raw parameter
                 assert raw_data is None
 
 

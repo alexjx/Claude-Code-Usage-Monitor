@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from claude_monitor.core.models import (
     BurnRate,
     CostMode,
+    DedupeMode,
     SessionBlock,
     TokenCounts,
     UsageEntry,
@@ -90,7 +91,8 @@ class TestAnalyzeUsage:
 
         result = analyze_usage(quick_start=True, hours_back=None)
         mock_load.assert_called_once_with(
-            data_path=None, hours_back=24, mode=CostMode.AUTO, include_raw=True
+            data_path=None, hours_back=24, mode=CostMode.AUTO, include_raw=True,
+            dedupe_mode=DedupeMode.MESSAGE_ID_MAX,
         )
 
         assert result["metadata"]["quick_start"] is True
@@ -112,7 +114,8 @@ class TestAnalyzeUsage:
 
         result = analyze_usage(quick_start=True, hours_back=48)
         mock_load.assert_called_once_with(
-            data_path=None, hours_back=48, mode=CostMode.AUTO, include_raw=True
+            data_path=None, hours_back=48, mode=CostMode.AUTO, include_raw=True,
+            dedupe_mode=DedupeMode.MESSAGE_ID_MAX,
         )
 
         assert result["metadata"]["quick_start"] is True

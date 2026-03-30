@@ -1,12 +1,16 @@
 """Shared pytest fixtures for Claude Monitor tests."""
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Set
 from unittest.mock import Mock
 
 import pytest
 
 from claude_monitor.core.models import CostMode, UsageEntry
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "logs"
 
 
 @pytest.fixture
@@ -358,3 +362,77 @@ def mock_orchestrator_args() -> Mock:
     args.refresh_rate = 10
     args.custom_limit_tokens = None
     return args
+
+
+# Fixtures for loading log fixtures
+
+@pytest.fixture
+def legacy_log_path() -> Path:
+    """Path to legacy log fixture."""
+    return FIXTURES_DIR / "legacy" / "usage.jsonl"
+
+
+@pytest.fixture
+def modern_main_log_path() -> Path:
+    """Path to modern main agent log fixture."""
+    return FIXTURES_DIR / "modern-main" / "usage.jsonl"
+
+
+@pytest.fixture
+def modern_subagents_log_path() -> Path:
+    """Path to modern subagents log fixture."""
+    return FIXTURES_DIR / "modern-subagents" / "usage.jsonl"
+
+
+@pytest.fixture
+def mixed_log_path() -> Path:
+    """Path to mixed log fixture."""
+    return FIXTURES_DIR / "mixed" / "usage.jsonl"
+
+
+@pytest.fixture
+def legacy_log_entries(legacy_log_path: Path) -> List[Dict[str, Any]]:
+    """Load legacy log entries."""
+    entries = []
+    with open(legacy_log_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+    return entries
+
+
+@pytest.fixture
+def modern_main_log_entries(modern_main_log_path: Path) -> List[Dict[str, Any]]:
+    """Load modern main agent log entries."""
+    entries = []
+    with open(modern_main_log_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+    return entries
+
+
+@pytest.fixture
+def modern_subagents_log_entries(modern_subagents_log_path: Path) -> List[Dict[str, Any]]:
+    """Load modern subagents log entries."""
+    entries = []
+    with open(modern_subagents_log_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+    return entries
+
+
+@pytest.fixture
+def mixed_log_entries(mixed_log_path: Path) -> List[Dict[str, Any]]:
+    """Load mixed log entries."""
+    entries = []
+    with open(mixed_log_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+    return entries

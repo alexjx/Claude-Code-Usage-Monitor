@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from claude_monitor.core.models import DedupeMode
 from claude_monitor.core.plans import DEFAULT_TOKEN_LIMIT, get_token_limit
 from claude_monitor.error_handling import report_error
 from claude_monitor.monitoring.data_manager import DataManager
@@ -70,12 +71,26 @@ class MonitoringOrchestrator:
         self._first_data_event.clear()
 
     def set_args(self, args: Any) -> None:
-        """Set command line arguments for token limit calculation.
+        """Set command line arguments for token limit calculation and data governance.
 
         Args:
             args: Command line arguments
         """
         self._args = args
+
+        # Inject governance parameters into DataManager
+        if hasattr(args, "dedupe_mode"):
+            dedupe_str = args.dedupe_mode
+            if dedupe_str == "legacy":
+                self.data_manager.dedupe_mode = DedupeMode.LEGACY
+            else:
+                self.data_manager.dedupe_mode = DedupeMode.MESSAGE_ID_MAX
+        if hasattr(args, "include_subagents"):
+            self.data_manager.include_subagents = bool(args.include_subagents)
+        if hasattr(args, "show_agent_breakdown"):
+            self.data_manager.show_agent_breakdown = bool(args.show_agent_breakdown)
+        if hasattr(args, "count_progress_usage"):
+            self.data_manager.count_progress_usage = str(args.count_progress_usage)
 
     def register_update_callback(
         self, callback: Callable[[Dict[str, Any]], None]

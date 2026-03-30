@@ -16,6 +16,15 @@ class CostMode(Enum):
     CALCULATED = "calculate"
 
 
+class DedupeMode(Enum):
+    """Deduplication modes for usage entries."""
+
+    # Legacy mode: use message_id + request_id as key (backward compatible)
+    LEGACY = "legacy"
+    # Modern mode: use message_id alone, keep entry with highest total_tokens per message_id
+    MESSAGE_ID_MAX = "message-id-max"
+
+
 @dataclass
 class UsageEntry:
     """Individual usage record from Claude usage data."""
@@ -29,6 +38,12 @@ class UsageEntry:
     model: str = ""
     message_id: str = ""
     request_id: str = ""
+    # Agent/Subagent attribution fields
+    agent_id: str = ""
+    is_sidechain: bool = False
+    source_tool_assistant_uuid: str = ""
+    scope: str = "unknown"  # primary_agent | subagent | unknown
+    raw_ref: str = ""
 
 
 @dataclass
@@ -88,6 +103,8 @@ class SessionBlock:
     limit_messages: List[Dict[str, Any]] = field(default_factory=list)
     projection_data: Optional[Dict[str, Any]] = None
     burn_rate_snapshot: Optional[BurnRate] = None
+    # Agent/Subagent attribution
+    agent_breakdown: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def total_tokens(self) -> int:

@@ -179,6 +179,27 @@ class Settings(BaseSettings):
 
     clear: bool = Field(default=False, description="Clear saved configuration")
 
+    # Governance and dedupe switches
+    dedupe_mode: Literal["legacy", "message-id-max"] = Field(
+        default="message-id-max",
+        description="Deduplication mode: 'legacy' uses message_id+request_id, 'message-id-max' uses message_id only with final usage aggregation",
+    )
+
+    include_subagents: bool = Field(
+        default=True,
+        description="Include subagent usage in aggregation when True",
+    )
+
+    show_agent_breakdown: bool = Field(
+        default=False,
+        description="Show agent/subagent breakdown in output when True",
+    )
+
+    count_progress_usage: Literal["off", "fallback", "strict"] = Field(
+        default="off",
+        description="Progress event usage counting: 'off' (default, ignore), 'fallback' (count if no assistant event), 'strict' (count all)",
+    )
+
     @field_validator("plan", mode="before")
     @classmethod
     def validate_plan(cls, v: Any) -> str:
@@ -360,5 +381,9 @@ class Settings(BaseSettings):
         args.log_level = self.log_level
         args.log_file = str(self.log_file) if self.log_file else None
         args.version = self.version
+        args.dedupe_mode = self.dedupe_mode
+        args.include_subagents = self.include_subagents
+        args.show_agent_breakdown = self.show_agent_breakdown
+        args.count_progress_usage = self.count_progress_usage
 
         return args

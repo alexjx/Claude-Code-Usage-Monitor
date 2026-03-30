@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from claude_monitor.core.calculations import BurnRateCalculator
-from claude_monitor.core.models import CostMode, SessionBlock, UsageEntry
+from claude_monitor.core.models import CostMode, DedupeMode, SessionBlock, UsageEntry
 from claude_monitor.data.analyzer import SessionAnalyzer
 from claude_monitor.data.reader import load_usage_entries
 
@@ -20,6 +20,10 @@ def analyze_usage(
     use_cache: bool = True,
     quick_start: bool = False,
     data_path: Optional[str] = None,
+    dedupe_mode: DedupeMode = DedupeMode.MESSAGE_ID_MAX,
+    include_subagents: bool = True,
+    show_agent_breakdown: bool = False,
+    count_progress_usage: str = "off",
 ) -> Dict[str, Any]:
     """
     Main entry point to generate response_final.json.
@@ -35,13 +39,18 @@ def analyze_usage(
         use_cache: Use cached data when available
         quick_start: Use minimal data for quick startup (last 24h only)
         data_path: Optional path to Claude data directory
+        dedupe_mode: Deduplication mode (legacy or message-id-max)
+        include_subagents: Whether to include subagent usage in aggregation
+        show_agent_breakdown: Whether to show agent/subagent breakdown in output
+        count_progress_usage: Progress event usage counting: 'off', 'fallback', 'strict'
 
     Returns:
         Dictionary with analyzed blocks
     """
     logger.info(
         f"analyze_usage called with hours_back={hours_back}, use_cache={use_cache}, "
-        f"quick_start={quick_start}, data_path={data_path}"
+        f"quick_start={quick_start}, data_path={data_path}, dedupe_mode={dedupe_mode}, "
+        f"include_subagents={include_subagents}, count_progress_usage={count_progress_usage}"
     )
 
     if quick_start and hours_back is None:
@@ -56,7 +65,12 @@ def analyze_usage(
         hours_back=hours_back,
         mode=CostMode.AUTO,
         include_raw=True,
+        dedupe_mode=dedupe_mode,
     )
+
+    # Filter subagents if configured
+    if not include_subagents:
+        entries = [e for e in entries if not e.is_sidechain]
     load_time = (datetime.now() - start_time).total_seconds()
     logger.info(f"Data loaded in {load_time:.3f}s")
 
@@ -222,7 +236,7 @@ def _format_block_entries(entries: List[UsageEntry]) -> List[Dict[str, Any]]:
 
 
 def _add_optional_block_data(block: SessionBlock, block_dict: Dict[str, Any]) -> None:
-    """Add optional burn rate, projection, and limit data to block dict."""
+    """Add optional burn rate, projection, limit, and agent breakdown data to block dict."""
     if hasattr(block, "burn_rate_snapshot") and block.burn_rate_snapshot:
         block_dict["burnRate"] = {
             "tokensPerMinute": block.burn_rate_snapshot.tokens_per_minute,
@@ -234,3 +248,6 @@ def _add_optional_block_data(block: SessionBlock, block_dict: Dict[str, Any]) ->
 
     if hasattr(block, "limit_messages") and block.limit_messages:
         block_dict["limitMessages"] = block.limit_messages
+
+    if hasattr(block, "agent_breakdown") and block.agent_breakdown:
+        block_dict["agentBreakdown"] = block.agent_breakdown

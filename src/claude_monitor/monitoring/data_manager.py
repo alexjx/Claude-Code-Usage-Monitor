@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
+from claude_monitor.core.models import DedupeMode
 from claude_monitor.data.analysis import analyze_usage
 from claude_monitor.error_handling import report_error
 
@@ -18,6 +19,10 @@ class DataManager:
         cache_ttl: int = 30,
         hours_back: int = 192,
         data_path: Optional[str] = None,
+        dedupe_mode: DedupeMode = DedupeMode.MESSAGE_ID_MAX,
+        include_subagents: bool = True,
+        show_agent_breakdown: bool = False,
+        count_progress_usage: str = "off",
     ) -> None:
         """Initialize data manager with cache and fetch settings.
 
@@ -25,6 +30,10 @@ class DataManager:
             cache_ttl: Cache time-to-live in seconds
             hours_back: Hours of historical data to fetch
             data_path: Path to data directory
+            dedupe_mode: Deduplication mode (legacy or message-id-max)
+            include_subagents: Whether to include subagent usage in aggregation
+            show_agent_breakdown: Whether to show agent breakdown in output
+            count_progress_usage: Progress event usage counting mode
         """
         self.cache_ttl: int = cache_ttl
         self._cache: Optional[Dict[str, Any]] = None
@@ -32,6 +41,10 @@ class DataManager:
 
         self.hours_back: int = hours_back
         self.data_path: Optional[str] = data_path
+        self.dedupe_mode: DedupeMode = dedupe_mode
+        self.include_subagents: bool = include_subagents
+        self.show_agent_breakdown: bool = show_agent_breakdown
+        self.count_progress_usage: str = count_progress_usage
         self._last_error: Optional[str] = None
         self._last_successful_fetch: Optional[float] = None
 
@@ -60,6 +73,10 @@ class DataManager:
                     quick_start=False,
                     use_cache=False,
                     data_path=self.data_path,
+                    dedupe_mode=self.dedupe_mode,
+                    include_subagents=self.include_subagents,
+                    show_agent_breakdown=self.show_agent_breakdown,
+                    count_progress_usage=self.count_progress_usage,
                 )
 
                 if data is not None:
