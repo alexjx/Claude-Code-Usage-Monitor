@@ -48,20 +48,12 @@ class LastUsedParams:
     def save(self, settings: "Settings") -> None:
         """Save current settings as last used."""
         try:
-            params = {
-                "theme": settings.theme,
-                "timezone": settings.timezone,
-                "time_format": settings.time_format,
-                "refresh_rate": settings.refresh_rate,
-                "reset_hour": settings.reset_hour,
-                "view": settings.view,
-                "timestamp": datetime.now().isoformat(),
-            }
+            params = {"timestamp": datetime.now().isoformat()}
 
-            if settings.custom_limit_tokens:
-                params["custom_limit_tokens"] = settings.custom_limit_tokens
-            if settings.model_filter:
-                params["model_filter"] = settings.model_filter
+            for field in PERSISTENT_FIELDS:
+                value = getattr(settings, field, None)
+                if value is not None:
+                    params[field] = value
 
             self.config_dir.mkdir(parents=True, exist_ok=True)
 
