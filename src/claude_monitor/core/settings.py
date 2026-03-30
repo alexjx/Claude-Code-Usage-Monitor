@@ -3,12 +3,13 @@
 import argparse
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import pytz
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from claude_monitor import __version__
@@ -200,6 +201,21 @@ class Settings(BaseSettings):
         description="Progress event usage counting: 'off' (default, ignore), 'fallback' (count if no assistant event), 'strict' (count all)",
     )
 
+    # Time filter fields
+    last_days: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Quick filter for past N days (must be >= 1 if provided)",
+    )
+    start_date: Optional[str] = Field(
+        default=None,
+        description="Start date for custom range (format: YYYY-MM-DD)",
+    )
+    end_date: Optional[str] = Field(
+        default=None,
+        description="End date for custom range (format: YYYY-MM-DD)",
+    )
+
     @field_validator("plan", mode="before")
     @classmethod
     def validate_plan(cls, v: Any) -> str:
@@ -269,6 +285,49 @@ class Settings(BaseSettings):
         if v_upper not in valid_levels:
             raise ValueError(f"Invalid log level: {v}")
         return v_upper
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
+        """Validate date format is YYYY-MM-DD."""
+        if v is None:
+            return v
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            raise ValueError(f"Invalid date format: {v}. Must be YYYY-MM-DD")
+        # Also validate it's a valid date
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError as e:
+            raise ValueError(f"Invalid date: {v}. Error: {e}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_time_filter_constraints(self) -> "Settings":
+        """Validate time filter constraints:
+        1. last_days is mutually exclusive with start_date/end_date
+        2. start_date <= end_date when both are provided
+        """
+        # Check mutual exclusivity
+        has_last_days = self.last_days is not None
+        has_start_date = self.start_date is not None
+        has_end_date = self.end_date is not None
+
+        if has_last_days and (has_start_date or has_end_date):
+            raise ValueError(
+                "Cannot use --last-days with --start-date or --end-date. "
+                "Use either --last-days OR --start-date/--end-date, not both."
+            )
+
+        # Validate date ordering
+        if has_start_date and has_end_date:
+            start = datetime.strptime(self.start_date, "%Y-%m-%d")
+            end = datetime.strptime(self.end_date, "%Y-%m-%d")
+            if start > end:
+                raise ValueError(
+                    f"Start date {self.start_date} must be before or equal to end date {self.end_date}"
+                )
+
+        return self
 
     @classmethod
     def settings_customise_sources(
@@ -385,5 +444,8 @@ class Settings(BaseSettings):
         args.include_subagents = self.include_subagents
         args.show_agent_breakdown = self.show_agent_breakdown
         args.count_progress_usage = self.count_progress_usage
+        args.last_days = self.last_days
+        args.start_date = self.start_date
+        args.end_date = self.end_date
 
         return args
