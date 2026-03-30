@@ -396,6 +396,12 @@ class Settings(BaseSettings):
                 if key not in cli_provided_fields:
                     setattr(settings, key, value)
 
+            # Defensive cleanup: clear any filter fields that weren't explicitly passed via CLI
+            # This ensures legacy last_used.json files with dirty filter values don't pollute current run
+            for field in NON_PERSISTENT_FILTER_FIELDS:
+                if field not in cli_provided_fields and getattr(settings, field, None) is not None:
+                    setattr(settings, field, None)
+
             if (
                 "plan" in cli_provided_fields
                 and settings.plan == "custom"
