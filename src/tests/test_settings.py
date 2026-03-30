@@ -842,6 +842,87 @@ class TestTimeFilterValidators:
 class TestSettingsIntegration:
     """Integration tests for Settings class."""
 
+    @patch("claude_monitor.core.settings.Settings._get_system_timezone")
+    @patch("claude_monitor.core.settings.Settings._get_system_time_format")
+    def test_load_clears_stale_model_filter(
+        self, mock_time_format: Mock, mock_timezone: Mock
+    ) -> None:
+        """Test that stale model_filter from last_used.json is cleared when not passed via CLI."""
+        mock_timezone.return_value = "UTC"
+        mock_time_format.return_value = "24h"
+
+        # last_used.json has model_filter (dirty value)
+        test_params = {
+            "theme": "dark",
+            "model_filter": "opus",  # This should be cleared
+        }
+
+        with patch("claude_monitor.core.settings.LastUsedParams") as MockLastUsed:
+            mock_instance = Mock()
+            mock_instance.load.return_value = test_params
+            MockLastUsed.return_value = mock_instance
+
+            # Load without --model-filter
+            settings = Settings.load_with_last_used([])
+
+            # model_filter should be None (cleared by defensive fallback)
+            assert settings.model_filter is None
+
+    @patch("claude_monitor.core.settings.Settings._get_system_timezone")
+    @patch("claude_monitor.core.settings.Settings._get_system_time_format")
+    def test_load_preserves_cli_model_filter(
+        self, mock_time_format: Mock, mock_timezone: Mock
+    ) -> None:
+        """Test that CLI-provided model_filter is preserved and not cleared."""
+        mock_timezone.return_value = "UTC"
+        mock_time_format.return_value = "24h"
+
+        # last_used.json has different model_filter
+        test_params = {
+            "theme": "dark",
+            "model_filter": "opus",  # Should be overridden by CLI
+        }
+
+        with patch("claude_monitor.core.settings.LastUsedParams") as MockLastUsed:
+            mock_instance = Mock()
+            mock_instance.load.return_value = test_params
+            MockLastUsed.return_value = mock_instance
+
+            # Load with --model-filter via CLI
+            settings = Settings.load_with_last_used(["--model-filter", "haiku"])
+
+            # model_filter should be haiku (from CLI), not opus (from last_used)
+            assert settings.model_filter == "haiku"
+
+    @patch("claude_monitor.core.settings.Settings._get_system_timezone")
+    @patch("claude_monitor.core.settings.Settings._get_system_time_format")
+    def test_load_clears_stale_time_filters(
+        self, mock_time_format: Mock, mock_timezone: Mock
+    ) -> None:
+        """Test that stale time filter fields are cleared."""
+        mock_timezone.return_value = "UTC"
+        mock_time_format.return_value = "24h"
+
+        # last_used.json has time filters (dirty values)
+        test_params = {
+            "theme": "dark",
+            "last_days": 30,
+            "start_date": "2026-01-01",
+            "end_date": "2026-03-01",
+        }
+
+        with patch("claude_monitor.core.settings.LastUsedParams") as MockLastUsed:
+            mock_instance = Mock()
+            mock_instance.load.return_value = test_params
+            MockLastUsed.return_value = mock_instance
+
+            # Load without time filters
+            settings = Settings.load_with_last_used([])
+
+            assert settings.last_days is None
+            assert settings.start_date is None
+            assert settings.end_date is None
+
     def test_complete_workflow(self) -> None:
         """Test complete workflow with real file operations."""
         with tempfile.TemporaryDirectory() as temp_dir:
