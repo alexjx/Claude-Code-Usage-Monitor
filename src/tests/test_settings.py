@@ -627,6 +627,158 @@ class TestSettings:
         assert namespace.model_filter is None
 
 
+class TestTimeFilterValidators:
+    """Test suite for time filter field validators."""
+
+    def test_last_days_ge_1_accepted(self) -> None:
+        """Test last_days >= 1 is accepted."""
+        settings = Settings(last_days=1, _cli_parse_args=[])
+        assert settings.last_days == 1
+
+        settings = Settings(last_days=30, _cli_parse_args=[])
+        assert settings.last_days == 30
+
+        settings = Settings(last_days=365, _cli_parse_args=[])
+        assert settings.last_days == 365
+
+    def test_last_days_zero_raises(self) -> None:
+        """Test last_days = 0 raises ValueError."""
+        with pytest.raises(ValueError):
+            Settings(last_days=0, _cli_parse_args=[])
+
+    def test_last_days_negative_raises(self) -> None:
+        """Test last_days < 0 raises ValueError."""
+        with pytest.raises(ValueError):
+            Settings(last_days=-1, _cli_parse_args=[])
+
+        with pytest.raises(ValueError):
+            Settings(last_days=-30, _cli_parse_args=[])
+
+    def test_start_date_valid_format(self) -> None:
+        """Test valid YYYY-MM-DD format for start_date."""
+        settings = Settings(start_date="2026-03-30", _cli_parse_args=[])
+        assert settings.start_date == "2026-03-30"
+
+        settings = Settings(start_date="2025-01-01", _cli_parse_args=[])
+        assert settings.start_date == "2025-01-01"
+
+        settings = Settings(start_date="2024-12-31", _cli_parse_args=[])
+        assert settings.start_date == "2024-12-31"
+
+    def test_end_date_valid_format(self) -> None:
+        """Test valid YYYY-MM-DD format for end_date."""
+        settings = Settings(end_date="2026-03-30", _cli_parse_args=[])
+        assert settings.end_date == "2026-03-30"
+
+        settings = Settings(end_date="2025-06-15", _cli_parse_args=[])
+        assert settings.end_date == "2025-06-15"
+
+    def test_start_date_invalid_format_mm_dd_yyyy(self) -> None:
+        """Test invalid format MM-DD-YYYY raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid date format"):
+            Settings(start_date="03-30-2026", _cli_parse_args=[])
+
+    def test_start_date_invalid_format_slashes(self) -> None:
+        """Test invalid format YYYY/MM/DD raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid date format"):
+            Settings(start_date="2026/03/30", _cli_parse_args=[])
+
+    def test_start_date_invalid_format_not_a_date(self) -> None:
+        """Test invalid format not-a-date raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid date format"):
+            Settings(start_date="not-a-date", _cli_parse_args=[])
+
+    def test_end_date_invalid_format_mm_dd_yyyy(self) -> None:
+        """Test invalid format MM-DD-YYYY raises ValueError for end_date."""
+        with pytest.raises(ValueError, match="Invalid date format"):
+            Settings(end_date="03-30-2026", _cli_parse_args=[])
+
+    def test_end_date_invalid_format_slashes(self) -> None:
+        """Test invalid format YYYY/MM/DD raises ValueError for end_date."""
+        with pytest.raises(ValueError, match="Invalid date format"):
+            Settings(end_date="2026/03/30", _cli_parse_args=[])
+
+    def test_end_date_invalid_format_not_a_date(self) -> None:
+        """Test invalid format not-a-date raises ValueError for end_date."""
+        with pytest.raises(ValueError, match="Invalid date format"):
+            Settings(end_date="not-a-date", _cli_parse_args=[])
+
+    def test_last_days_alone_ok(self) -> None:
+        """Test last_days alone is valid."""
+        settings = Settings(last_days=7, _cli_parse_args=[])
+        assert settings.last_days == 7
+        assert settings.start_date is None
+        assert settings.end_date is None
+
+    def test_start_date_alone_ok(self) -> None:
+        """Test start_date alone is valid."""
+        settings = Settings(start_date="2026-03-01", _cli_parse_args=[])
+        assert settings.start_date == "2026-03-01"
+        assert settings.last_days is None
+        assert settings.end_date is None
+
+    def test_end_date_alone_ok(self) -> None:
+        """Test end_date alone is valid."""
+        settings = Settings(end_date="2026-03-30", _cli_parse_args=[])
+        assert settings.end_date == "2026-03-30"
+        assert settings.last_days is None
+        assert settings.start_date is None
+
+    def test_last_days_plus_start_date_raises(self) -> None:
+        """Test last_days + start_date together raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot use --last-days with --start-date"):
+            Settings(last_days=7, start_date="2026-03-01", _cli_parse_args=[])
+
+    def test_last_days_plus_end_date_raises(self) -> None:
+        """Test last_days + end_date together raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot use --last-days with --start-date or --end-date"):
+            Settings(last_days=7, end_date="2026-03-30", _cli_parse_args=[])
+
+    def test_last_days_plus_both_dates_raises(self) -> None:
+        """Test last_days + start_date + end_date together raises ValueError."""
+        with pytest.raises(
+            ValueError, match="Cannot use --last-days with --start-date or --end-date"
+        ):
+            Settings(
+                last_days=7,
+                start_date="2026-03-01",
+                end_date="2026-03-30",
+                _cli_parse_args=[],
+            )
+
+    def test_start_date_before_end_date_ok(self) -> None:
+        """Test start_date <= end_date is accepted."""
+        settings = Settings(
+            start_date="2026-03-01",
+            end_date="2026-03-30",
+            _cli_parse_args=[],
+        )
+        assert settings.start_date == "2026-03-01"
+        assert settings.end_date == "2026-03-30"
+
+    def test_start_date_equals_end_date_ok(self) -> None:
+        """Test start_date == end_date is accepted."""
+        settings = Settings(
+            start_date="2026-03-30",
+            end_date="2026-03-30",
+            _cli_parse_args=[],
+        )
+        assert settings.start_date == "2026-03-30"
+        assert settings.end_date == "2026-03-30"
+
+    def test_start_date_after_end_date_raises(self) -> None:
+        """Test start_date > end_date raises ValueError."""
+        with pytest.raises(
+            ValueError,
+            match="Start date 2026-03-30 must be before or equal to end date 2026-03-01",
+        ):
+            Settings(
+                start_date="2026-03-30",
+                end_date="2026-03-01",
+                _cli_parse_args=[],
+            )
+
+
 class TestSettingsIntegration:
     """Integration tests for Settings class."""
 
