@@ -67,6 +67,9 @@ class TableViewsController:
             period_column_name, style=self.key_style, width=period_column_width
         )
         table.add_column("Models", style=self.value_style, width=20)
+        table.add_column(
+            "Messages", style=self.value_style, justify="right", width=12
+        )
         table.add_column("Input", style=self.value_style, justify="right", width=12)
         table.add_column("Output", style=self.value_style, justify="right", width=12)
         table.add_column(
@@ -106,6 +109,7 @@ class TableViewsController:
                 + data["cache_read_tokens"]
             )
             models_text = self._format_models(data["models_used"])
+            messages_text = format_number(data.get("entries_count", 0))
             input_text = format_number(data["input_tokens"])
             output_text = format_number(data["output_tokens"])
             cache_create_text = format_number(data["cache_creation_tokens"])
@@ -122,6 +126,7 @@ class TableViewsController:
                     data.get("total_cost", 0.0),
                 )
                 models_text = model_analysis["models"]
+                messages_text = model_analysis["messages"]
                 input_text = model_analysis["input"]
                 output_text = model_analysis["output"]
                 cache_create_text = model_analysis["cache_create"]
@@ -132,6 +137,7 @@ class TableViewsController:
             table.add_row(
                 data[period_key],
                 models_text,
+                messages_text,
                 input_text,
                 output_text,
                 cache_create_text,
@@ -148,12 +154,13 @@ class TableViewsController:
             totals: Dictionary with total statistics
         """
         # Add separator
-        table.add_row("", "", "", "", "", "", "", "")
+        table.add_row("", "", "", "", "", "", "", "", "")
 
         # Add totals row
         table.add_row(
             Text("Total", style=self.accent_style),
             "",
+            Text(format_number(totals.get("entries_count", 0)), style=self.accent_style),
             Text(format_number(totals["input_tokens"]), style=self.accent_style),
             Text(format_number(totals["output_tokens"]), style=self.accent_style),
             Text(
@@ -224,7 +231,7 @@ class TableViewsController:
         )
 
         # Add data rows
-        self._add_data_rows(table, monthly_data, "month")
+        self._add_data_rows(table, monthly_data, "month", include_model_analysis=True)
 
         # Add totals
         self._add_totals_row(table, totals)
@@ -250,7 +257,7 @@ class TableViewsController:
             "",
             f"Total Tokens: {format_number(totals['total_tokens'])}",
             f"Total Cost: {format_currency(totals['total_cost'])}",
-            f"Entries: {format_number(totals['entries_count'])}",
+            f"Messages: {format_number(totals['entries_count'])}",
         ]
 
         summary_text = Text("\n".join(summary_lines), style=self.value_style)
@@ -304,6 +311,7 @@ class TableViewsController:
         if not models:
             return {
                 "models": "No models",
+                "messages": format_number(period_data.get("entries_count", 0)),
                 "input": format_number(period_data.get("input_tokens", 0)),
                 "output": format_number(period_data.get("output_tokens", 0)),
                 "cache_create": format_number(
@@ -325,6 +333,7 @@ class TableViewsController:
                 input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
             )
             model_cost = breakdown.get("cost", 0.0)
+            model_count = breakdown.get("count", 0)
             model_totals.append(
                 {
                     "model": model,
@@ -334,6 +343,7 @@ class TableViewsController:
                     "cache_read_tokens": cache_read_tokens,
                     "tokens": model_tokens,
                     "cost": model_cost,
+                    "count": model_count,
                 }
             )
 
@@ -346,6 +356,7 @@ class TableViewsController:
         cache_read_lines = []
         total_tokens_lines = []
         cost_lines = []
+        messages_lines = []
         for item in model_totals:
             total_token_pct = (
                 (item["tokens"] / period_total_tokens * 100.0)
@@ -385,6 +396,11 @@ class TableViewsController:
                 if period_data.get("cache_read_tokens", 0) > 0
                 else 0.0
             )
+            messages_pct = (
+                (item["count"] / period_data.get("entries_count", 0) * 100.0)
+                if period_data.get("entries_count", 0) > 0
+                else 0.0
+            )
 
             models_lines.append(f"• {item['model']}")
             input_lines.append(
@@ -403,9 +419,13 @@ class TableViewsController:
                 f"{format_number(item['tokens'])} ({total_token_pct:.1f}%)"
             )
             cost_lines.append(f"{format_currency(item['cost'])} ({cost_pct:.1f}%)")
+            messages_lines.append(
+                f"{format_number(item['count'])} ({messages_pct:.1f}%)"
+            )
 
         return {
             "models": "\n".join(models_lines),
+            "messages": "\n".join(messages_lines),
             "input": "\n".join(input_lines),
             "output": "\n".join(output_lines),
             "cache_create": "\n".join(cache_create_lines),
