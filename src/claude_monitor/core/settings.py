@@ -17,6 +17,26 @@ from claude_monitor import __version__
 logger = logging.getLogger(__name__)
 
 
+# Fields that should be persisted to last_used.json
+PERSISTENT_FIELDS = frozenset({
+    "theme",
+    "timezone",
+    "time_format",
+    "refresh_rate",
+    "reset_hour",
+    "view",
+    "custom_limit_tokens",
+})
+
+# Filter fields that should NEVER be persisted
+NON_PERSISTENT_FILTER_FIELDS = frozenset({
+    "model_filter",
+    "last_days",
+    "start_date",
+    "end_date",
+})
+
+
 class LastUsedParams:
     """Manages last used parameters persistence (moved from last_used.py)."""
 
