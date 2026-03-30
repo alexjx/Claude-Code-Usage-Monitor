@@ -579,3 +579,83 @@ class TestTableViewsController:
         # Monthly table with empty data
         monthly_table = controller.create_monthly_table([], empty_totals, "UTC")
         assert monthly_table.row_count == 2  # Separator + totals
+
+    def test_display_aggregated_view_period_label_override(
+        self,
+        controller: TableViewsController,
+        sample_daily_data: List[Dict[str, Any]],
+        sample_totals: Dict[str, Any],
+    ) -> None:
+        """Test that period_label overrides auto-computed period in summary panel."""
+        from io import StringIO
+        from rich.console import Console
+
+        custom_period = "Custom Period: Q1 2024"
+        string_io = StringIO()
+        console = Console(file=string_io, force_terminal=True)
+
+        controller.display_aggregated_view(
+            data=sample_daily_data,
+            view_mode="daily",
+            timezone="UTC",
+            plan="pro",
+            token_limit=100000,
+            console=console,
+            period_label=custom_period,
+        )
+
+        output = string_io.getvalue()
+        assert custom_period in output
+
+    def test_display_aggregated_view_without_period_label_uses_auto_computed(
+        self,
+        controller: TableViewsController,
+        sample_daily_data: List[Dict[str, Any]],
+        sample_totals: Dict[str, Any],
+    ) -> None:
+        """Test that without period_label, auto-computed period is used."""
+        from io import StringIO
+        from rich.console import Console
+
+        string_io = StringIO()
+        console = Console(file=string_io, force_terminal=True)
+
+        controller.display_aggregated_view(
+            data=sample_daily_data,
+            view_mode="daily",
+            timezone="UTC",
+            plan="pro",
+            token_limit=100000,
+            console=console,
+        )
+
+        output = string_io.getvalue()
+        expected_period = f"{sample_daily_data[0]['date']} to {sample_daily_data[-1]['date']}"
+        assert expected_period in output
+
+    def test_display_aggregated_view_monthly_period_label_override(
+        self,
+        controller: TableViewsController,
+        sample_monthly_data: List[Dict[str, Any]],
+        sample_totals: Dict[str, Any],
+    ) -> None:
+        """Test that period_label overrides auto-computed period for monthly view."""
+        from io import StringIO
+        from rich.console import Console
+
+        custom_period = "Full Year 2024"
+        string_io = StringIO()
+        console = Console(file=string_io, force_terminal=True)
+
+        controller.display_aggregated_view(
+            data=sample_monthly_data,
+            view_mode="monthly",
+            timezone="UTC",
+            plan="pro",
+            token_limit=100000,
+            console=console,
+            period_label=custom_period,
+        )
+
+        output = string_io.getvalue()
+        assert custom_period in output
