@@ -137,6 +137,9 @@ class TestFunctions:
         args.timezone = "UTC"
         args.plan = "pro"
         args.model_filter = "haiku"
+        args.last_days = None
+        args.start_date = None
+        args.end_date = None
 
         with (
             patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
@@ -171,5 +174,196 @@ class TestFunctions:
                 aggregation_mode="daily",
                 timezone="UTC",
                 model_filter="haiku",
+                last_days=None,
+                start_date=None,
+                end_date=None,
             )
             mock_controller_cls.return_value.display_aggregated_view.assert_called_once()
+
+    def test_run_table_view_passes_time_filter_params(self) -> None:
+        """Test table view wiring passes last_days/start_date/end_date to UsageAggregator."""
+        from claude_monitor.cli.main import _run_table_view
+
+        args = Mock()
+        args.timezone = "UTC"
+        args.plan = "pro"
+        args.model_filter = None
+        args.last_days = 30
+        args.start_date = None
+        args.end_date = None
+
+        with (
+            patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
+            patch(
+                "claude_monitor.cli.main.TableViewsController"
+            ) as mock_controller_cls,
+            patch(
+                "claude_monitor.cli.main._get_initial_token_limit", return_value=1000
+            ),
+            patch("claude_monitor.cli.main.print_themed"),
+            patch("signal.pause", side_effect=KeyboardInterrupt()),
+        ):
+            mock_aggregator = mock_aggregator_cls.return_value
+            mock_aggregator.aggregate.return_value = [
+                {
+                    "date": "2024-01-01",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_cost": 0.0,
+                    "models_used": ["claude-3-haiku"],
+                    "model_breakdowns": {},
+                    "entries_count": 1,
+                }
+            ]
+
+            _run_table_view(args, Path("/tmp"), "daily", Mock())
+
+            mock_aggregator_cls.assert_called_once_with(
+                data_path="/tmp",
+                aggregation_mode="daily",
+                timezone="UTC",
+                model_filter=None,
+                last_days=30,
+                start_date=None,
+                end_date=None,
+            )
+
+    def test_run_table_view_passes_date_range_params(self) -> None:
+        """Test table view wiring passes date range to UsageAggregator."""
+        from claude_monitor.cli.main import _run_table_view
+
+        args = Mock()
+        args.timezone = "UTC"
+        args.plan = "pro"
+        args.model_filter = None
+        args.last_days = None
+        args.start_date = "2026-01-01"
+        args.end_date = "2026-03-31"
+
+        with (
+            patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
+            patch(
+                "claude_monitor.cli.main.TableViewsController"
+            ) as mock_controller_cls,
+            patch(
+                "claude_monitor.cli.main._get_initial_token_limit", return_value=1000
+            ),
+            patch("claude_monitor.cli.main.print_themed"),
+            patch("signal.pause", side_effect=KeyboardInterrupt()),
+        ):
+            mock_aggregator = mock_aggregator_cls.return_value
+            mock_aggregator.aggregate.return_value = [
+                {
+                    "date": "2024-01-01",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_cost": 0.0,
+                    "models_used": ["claude-3-haiku"],
+                    "model_breakdowns": {},
+                    "entries_count": 1,
+                }
+            ]
+
+            _run_table_view(args, Path("/tmp"), "daily", Mock())
+
+            mock_aggregator_cls.assert_called_once_with(
+                data_path="/tmp",
+                aggregation_mode="daily",
+                timezone="UTC",
+                model_filter=None,
+                last_days=None,
+                start_date="2026-01-01",
+                end_date="2026-03-31",
+            )
+
+    def test_run_table_view_passes_period_label_when_last_days_set(self) -> None:
+        """Test table view wiring passes period_label when last_days is set."""
+        from claude_monitor.cli.main import _run_table_view
+
+        args = Mock()
+        args.timezone = "UTC"
+        args.plan = "pro"
+        args.model_filter = None
+        args.last_days = 30
+        args.start_date = None
+        args.end_date = None
+
+        with (
+            patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
+            patch(
+                "claude_monitor.cli.main.TableViewsController"
+            ) as mock_controller_cls,
+            patch(
+                "claude_monitor.cli.main._get_initial_token_limit", return_value=1000
+            ),
+            patch("claude_monitor.cli.main.print_themed"),
+            patch("signal.pause", side_effect=KeyboardInterrupt()),
+        ):
+            mock_aggregator = mock_aggregator_cls.return_value
+            mock_aggregator.aggregate.return_value = [
+                {
+                    "date": "2024-01-01",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_cost": 0.0,
+                    "models_used": ["claude-3-haiku"],
+                    "model_breakdowns": {},
+                    "entries_count": 1,
+                }
+            ]
+
+            _run_table_view(args, Path("/tmp"), "daily", Mock())
+
+            mock_controller_cls.return_value.display_aggregated_view.assert_called_once()
+            call_kwargs = mock_controller_cls.return_value.display_aggregated_view.call_args
+            assert call_kwargs.kwargs.get("period_label") == "Last 30 days"
+
+    def test_run_table_view_passes_period_label_when_date_range_set(self) -> None:
+        """Test table view wiring passes period_label when date range is set."""
+        from claude_monitor.cli.main import _run_table_view
+
+        args = Mock()
+        args.timezone = "UTC"
+        args.plan = "pro"
+        args.model_filter = None
+        args.last_days = None
+        args.start_date = "2026-01-01"
+        args.end_date = "2026-03-31"
+
+        with (
+            patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
+            patch(
+                "claude_monitor.cli.main.TableViewsController"
+            ) as mock_controller_cls,
+            patch(
+                "claude_monitor.cli.main._get_initial_token_limit", return_value=1000
+            ),
+            patch("claude_monitor.cli.main.print_themed"),
+            patch("signal.pause", side_effect=KeyboardInterrupt()),
+        ):
+            mock_aggregator = mock_aggregator_cls.return_value
+            mock_aggregator.aggregate.return_value = [
+                {
+                    "date": "2024-01-01",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_cost": 0.0,
+                    "models_used": ["claude-3-haiku"],
+                    "model_breakdowns": {},
+                    "entries_count": 1,
+                }
+            ]
+
+            _run_table_view(args, Path("/tmp"), "daily", Mock())
+
+            mock_controller_cls.return_value.display_aggregated_view.assert_called_once()
+            call_kwargs = mock_controller_cls.return_value.display_aggregated_view.call_args
+            assert call_kwargs.kwargs.get("period_label") == "2026-01-01 to 2026-03-31"
