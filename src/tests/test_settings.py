@@ -54,7 +54,7 @@ class TestLastUsedParams:
                 "refresh_rate": 5,
                 "reset_hour": 12,
                 "custom_limit_tokens": 1000,
-                "model_filter": "haiku",
+                "model_filter": None,
                 "view": "realtime",
             },
         )()
@@ -76,7 +76,8 @@ class TestLastUsedParams:
         assert data["refresh_rate"] == 5
         assert data["reset_hour"] == 12
         assert data["custom_limit_tokens"] == 1000
-        assert data["model_filter"] == "haiku"
+        # model_filter should NOT be saved (it's session-only)
+        assert "model_filter" not in data
         assert data["view"] == "realtime"
         assert "timestamp" in data
 
@@ -106,6 +107,65 @@ class TestLastUsedParams:
         assert "custom_limit_tokens" not in data
         assert "model_filter" not in data
         assert data["theme"] == "light"
+
+    def test_save_excludes_model_filter(self) -> None:
+        """Test that model_filter is never saved regardless of view."""
+        mock_settings = type(
+            "MockSettings",
+            (),
+            {
+                "theme": "dark",
+                "timezone": "UTC",
+                "time_format": "24h",
+                "refresh_rate": 5,
+                "reset_hour": 12,
+                "custom_limit_tokens": 1000,
+                "model_filter": "opus",  # This should NOT be saved
+                "view": "realtime",
+            },
+        )()
+
+        self.last_used.save(mock_settings)
+
+        with open(self.last_used.params_file) as f:
+            data = json.load(f)
+
+        assert "model_filter" not in data
+        # Verify other fields are still saved correctly
+        assert data["theme"] == "dark"
+        assert data["custom_limit_tokens"] == 1000
+
+    def test_save_excludes_time_filter_fields(self) -> None:
+        """Test that time filter fields are never saved."""
+        mock_settings = type(
+            "MockSettings",
+            (),
+            {
+                "theme": "dark",
+                "timezone": "UTC",
+                "time_format": "24h",
+                "refresh_rate": 5,
+                "reset_hour": 12,
+                "custom_limit_tokens": None,
+                "model_filter": None,
+                "last_days": 7,  # Should NOT be saved
+                "start_date": "2026-03-01",  # Should NOT be saved
+                "end_date": "2026-03-30",  # Should NOT be saved
+                "view": "realtime",
+            },
+        )()
+
+        self.last_used.save(mock_settings)
+
+        with open(self.last_used.params_file) as f:
+            data = json.load(f)
+
+        assert "last_days" not in data
+        assert "start_date" not in data
+        assert "end_date" not in data
+        # Verify other fields are still saved correctly
+        assert data["theme"] == "dark"
+        assert data["timezone"] == "UTC"
 
     def test_save_creates_directory(self) -> None:
         """Test that save creates directory if it doesn't exist."""
