@@ -176,15 +176,16 @@ class TestTableViewsController:
         assert table.show_lines is True
 
         # Check columns
-        assert len(table.columns) == 8
+        assert len(table.columns) == 9
         assert table.columns[0].header == "Date"
         assert table.columns[1].header == "Models"
-        assert table.columns[2].header == "Input"
-        assert table.columns[3].header == "Output"
-        assert table.columns[4].header == "Cache Create"
-        assert table.columns[5].header == "Cache Read"
-        assert table.columns[6].header == "Total Tokens"
-        assert table.columns[7].header == "Cost (USD)"
+        assert table.columns[2].header == "Messages"
+        assert table.columns[3].header == "Input"
+        assert table.columns[4].header == "Output"
+        assert table.columns[5].header == "Cache Create"
+        assert table.columns[6].header == "Cache Read"
+        assert table.columns[7].header == "Total Tokens"
+        assert table.columns[8].header == "Cost (USD)"
 
     def test_create_daily_table_data(
         self,
@@ -223,15 +224,16 @@ class TestTableViewsController:
         assert table.show_lines is True
 
         # Check columns
-        assert len(table.columns) == 8
+        assert len(table.columns) == 9
         assert table.columns[0].header == "Month"
         assert table.columns[1].header == "Models"
-        assert table.columns[2].header == "Input"
-        assert table.columns[3].header == "Output"
-        assert table.columns[4].header == "Cache Create"
-        assert table.columns[5].header == "Cache Read"
-        assert table.columns[6].header == "Total Tokens"
-        assert table.columns[7].header == "Cost (USD)"
+        assert table.columns[2].header == "Messages"
+        assert table.columns[3].header == "Input"
+        assert table.columns[4].header == "Output"
+        assert table.columns[5].header == "Cache Create"
+        assert table.columns[6].header == "Cache Read"
+        assert table.columns[7].header == "Total Tokens"
+        assert table.columns[8].header == "Cost (USD)"
 
     def test_create_monthly_table_data(
         self,
@@ -329,14 +331,56 @@ class TestTableViewsController:
         table = controller.create_daily_table(sample_daily_data, sample_totals, "UTC")
 
         first_models_cell = table.columns[1]._cells[0]
-        first_input_cell = table.columns[2]._cells[0]
-        first_output_cell = table.columns[3]._cells[0]
-        first_cost_cell = table.columns[7]._cells[0]
+        first_input_cell = table.columns[3]._cells[0]
+        first_output_cell = table.columns[4]._cells[0]
+        first_cost_cell = table.columns[8]._cells[0]
 
         assert first_models_cell == "• claude-3-haiku\n• claude-3-sonnet"
         assert first_input_cell == "600 (60.0%)\n400 (40.0%)"
         assert first_output_cell == "300 (60.0%)\n200 (40.0%)"
         assert first_cost_cell == "$0.03 (60.0%)\n$0.02 (40.0%)"
+
+    def test_create_daily_table_includes_messages_column(
+        self,
+        controller: TableViewsController,
+        sample_daily_data: List[Dict[str, Any]],
+        sample_totals: Dict[str, Any],
+    ) -> None:
+        """Test daily table includes Messages column with count data."""
+        table = controller.create_daily_table(sample_daily_data, sample_totals, "UTC")
+
+        # Check Messages column (index 2) has content
+        messages_column = table.columns[2]
+        assert messages_column.header == "Messages"
+
+        # First data row should have non-empty Messages content
+        first_messages_cell = messages_column._cells[0]
+        assert first_messages_cell is not None
+        assert len(first_messages_cell) > 0
+
+        # For model analysis rows, Messages should show format like "6 (60.0%)\n4 (40.0%)"
+        assert "6 (60.0%)" in first_messages_cell
+        assert "4 (40.0%)" in first_messages_cell
+
+    def test_create_monthly_table_includes_messages_column(
+        self,
+        controller: TableViewsController,
+        sample_monthly_data: List[Dict[str, Any]],
+        sample_totals: Dict[str, Any],
+    ) -> None:
+        """Test monthly table includes Messages column with count data."""
+        table = controller.create_monthly_table(
+            sample_monthly_data, sample_totals, "UTC"
+        )
+
+        # Check Messages column (index 2) is present
+        messages_column = table.columns[2]
+        assert messages_column.header == "Messages"
+
+        # First data row should have non-empty Messages content
+        first_messages_cell = messages_column._cells[0]
+        assert first_messages_cell is not None
+        assert len(first_messages_cell) > 0
 
     def test_create_no_data_display(self, controller: TableViewsController) -> None:
         """Test creation of no data display."""
@@ -513,7 +557,7 @@ class TestTableViewsController:
         table = controller.create_daily_table(sample_daily_data, sample_totals, "UTC")
 
         # Check that numeric columns are right-aligned
-        for i in range(2, 8):  # Columns 2-7 are numeric
+        for i in range(2, 9):  # Columns 2-8 are numeric
             assert table.columns[i].justify == "right"
 
     def test_empty_data_lists(self, controller: TableViewsController) -> None:
