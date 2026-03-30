@@ -795,3 +795,137 @@ class TestUsageAggregator:
             mock_load.assert_called_once_with(
                 data_path=str(tmp_path), hours_back=168
             )
+
+    def test_aggregate_passes_hours_back_to_loader(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() passes hours_back to load_usage_entries via kwargs."""
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            last_days=7,
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ) as mock_load:
+            aggregator.aggregate()
+            mock_load.assert_called_once()
+            _, kwargs = mock_load.call_args
+            assert kwargs.get("hours_back") == 7 * 24
+
+    def test_aggregate_datetime_closed_interval_start(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test start_date is parsed to datetime with hour=0, minute=0, second=0, microsecond=0."""
+        from datetime import datetime, timezone
+
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            start_date="2026-03-01",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ) as mock_load:
+            with patch.object(
+                aggregator,
+                "aggregate_daily",
+                return_value=[],
+            ) as mock_agg_daily:
+                aggregator.aggregate()
+                mock_agg_daily.assert_called_once()
+                args, _ = mock_agg_daily.call_args
+                # args = (entries, start_datetime, end_datetime)
+                start_dt = args[1]  # start_datetime is 2nd positional arg
+                assert start_dt is not None
+                assert start_dt.year == 2026
+                assert start_dt.month == 3
+                assert start_dt.day == 1
+                assert start_dt.hour == 0
+                assert start_dt.minute == 0
+                assert start_dt.second == 0
+                assert start_dt.microsecond == 0
+                assert start_dt.tzinfo is not None
+
+    def test_aggregate_datetime_closed_interval_end(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test end_date is parsed to datetime with hour=23, minute=59, second=59, microsecond=999999."""
+        from datetime import datetime, timezone
+
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            end_date="2026-03-31",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ) as mock_load:
+            with patch.object(
+                aggregator,
+                "aggregate_daily",
+                return_value=[],
+            ) as mock_agg_daily:
+                aggregator.aggregate()
+                mock_agg_daily.assert_called_once()
+                args, _ = mock_agg_daily.call_args
+                # args = (entries, start_datetime, end_datetime)
+                end_dt = args[2]  # end_datetime is 3rd positional arg
+                assert end_dt is not None
+                assert end_dt.year == 2026
+                assert end_dt.month == 3
+                assert end_dt.day == 31
+                assert end_dt.hour == 23
+                assert end_dt.minute == 59
+                assert end_dt.second == 59
+                assert end_dt.microsecond == 999999
+                assert end_dt.tzinfo is not None
+
+    def test_aggregate_passes_parsed_datetimes_to_monthly(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test parsed datetimes are passed to aggregate_monthly."""
+        from datetime import datetime, timezone
+
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="monthly",
+            start_date="2026-01-01",
+            end_date="2026-03-31",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ) as mock_load:
+            with patch.object(
+                aggregator,
+                "aggregate_monthly",
+                return_value=[],
+            ) as mock_agg_monthly:
+                aggregator.aggregate()
+                mock_agg_monthly.assert_called_once()
+                args, _ = mock_agg_monthly.call_args
+                # args = (entries, start_datetime, end_datetime)
+                start_dt = args[1]
+                end_dt = args[2]
+
+                # Verify start_datetime is at beginning of day
+                assert start_dt is not None
+                assert start_dt.hour == 0
+                assert start_dt.minute == 0
+                assert start_dt.second == 0
+                assert start_dt.microsecond == 0
+
+                # Verify end_datetime is at end of day
+                assert end_dt is not None
+                assert end_dt.hour == 23
+                assert end_dt.minute == 59
+                assert end_dt.second == 59
+                assert end_dt.microsecond == 999999
