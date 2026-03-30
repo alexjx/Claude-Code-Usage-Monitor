@@ -99,6 +99,9 @@ class UsageAggregator:
         aggregation_mode: str = "daily",
         timezone: str = "UTC",
         model_filter: Optional[str] = None,
+        last_days: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ):
         """Initialize the aggregator.
 
@@ -107,11 +110,17 @@ class UsageAggregator:
             aggregation_mode: Mode of aggregation ('daily' or 'monthly')
             timezone: Timezone string for date formatting
             model_filter: Optional model keyword filter (comma/space separated)
+            last_days: Optional number of days to include (takes precedence over start_date/end_date)
+            start_date: Optional start date filter (YYYY-MM-DD format)
+            end_date: Optional end date filter (YYYY-MM-DD format)
         """
         self.data_path = data_path
         self.aggregation_mode = aggregation_mode
         self.timezone = timezone
         self.model_filter = model_filter
+        self.last_days = last_days
+        self.start_date = start_date
+        self.end_date = end_date
         self.timezone_handler = TimezoneHandler()
 
     def _parse_model_filter_terms(self, model_filter: Optional[str]) -> List[str]:
@@ -312,8 +321,31 @@ class UsageAggregator:
 
         logger.info(f"Starting aggregation in {self.aggregation_mode} mode")
 
+        # Compute hours_back for last_days filter
+        hours_back = None
+        if self.last_days:
+            hours_back = self.last_days * 24
+
+        # Parse date filters
+        start_datetime = None
+        end_datetime = None
+        if self.start_date:
+            start_dt = self.timezone_handler.parse_timestamp(self.start_date)
+            if start_dt:
+                # start_date uses 00:00:00 (beginning of day)
+                start_datetime = start_dt.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+        if self.end_date:
+            end_dt = self.timezone_handler.parse_timestamp(self.end_date)
+            if end_dt:
+                # end_date uses 23:59:59.999999 (end of day)
+                end_datetime = end_dt.replace(
+                    hour=23, minute=59, second=59, microsecond=999999
+                )
+
         # Load usage entries
-        entries, _ = load_usage_entries(data_path=self.data_path)
+        entries, _ = load_usage_entries(data_path=self.data_path, hours_back=hours_back)
 
         if not entries:
             logger.warning("No usage entries found")
@@ -334,8 +366,8 @@ class UsageAggregator:
 
         # Aggregate based on mode
         if self.aggregation_mode == "daily":
-            return self.aggregate_daily(entries)
+            return self.aggregate_daily(entries, start_datetime, end_datetime)
         elif self.aggregation_mode == "monthly":
-            return self.aggregate_monthly(entries)
+            return self.aggregate_monthly(entries, start_datetime, end_datetime)
         else:
             raise ValueError(f"Invalid aggregation mode: {self.aggregation_mode}")

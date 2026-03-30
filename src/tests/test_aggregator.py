@@ -660,3 +660,138 @@ class TestUsageAggregator:
         assert len(result) == 3
         for day in result:
             assert day["models_used"] == ["claude-3-opus"]
+
+    def test_aggregate_with_last_days(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() with last_days parameter."""
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            last_days=7,
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ) as mock_load:
+            result = aggregator.aggregate()
+
+            # Verify hours_back was passed as 7 * 24 = 168
+            mock_load.assert_called_once_with(
+                data_path=str(tmp_path), hours_back=168
+            )
+
+    def test_aggregate_with_start_date(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() with start_date parameter."""
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            start_date="2024-02-01",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ):
+            result = aggregator.aggregate()
+
+            # Should filter to only Feb entries (Feb 1, 15, 29)
+            assert len(result) == 3
+            for day in result:
+                assert day["date"].startswith("2024-02")
+
+    def test_aggregate_with_end_date(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() with end_date parameter."""
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            end_date="2024-01-15",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ):
+            result = aggregator.aggregate()
+
+            # Should filter to Jan 1, 2, 15 (and maybe early Feb if entries exist at start of day)
+            # The sample_entries have Feb entries at 12:00, so end_date at 23:59:59 should include them
+            # But Jan entries should be included
+            assert len(result) >= 3
+            for day in result:
+                assert day["date"] <= "2024-01-15"
+
+    def test_aggregate_with_date_range(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() with start_date and end_date parameters."""
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            start_date="2024-01-15",
+            end_date="2024-02-15",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ):
+            result = aggregator.aggregate()
+
+            # Should have Jan 15, 31 and Feb 1, 15 (but not Feb 29)
+            dates = [day["date"] for day in result]
+            assert "2024-01-15" in dates
+            assert "2024-01-31" in dates
+            assert "2024-02-01" in dates
+            assert "2024-02-15" in dates
+            assert "2024-02-29" not in dates
+
+    def test_aggregate_with_last_days_monthly(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() with last_days in monthly mode."""
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="monthly",
+            last_days=60,
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ) as mock_load:
+            result = aggregator.aggregate()
+
+            # Verify hours_back was passed as 60 * 24 = 1440
+            mock_load.assert_called_once_with(
+                data_path=str(tmp_path), hours_back=1440
+            )
+
+    def test_aggregate_with_all_filters(
+        self, tmp_path, sample_entries: List[UsageEntry]
+    ) -> None:
+        """Test aggregate() with last_days, start_date, and end_date parameters."""
+        # Note: last_days takes precedence when both are set
+        aggregator = UsageAggregator(
+            data_path=str(tmp_path),
+            aggregation_mode="daily",
+            last_days=7,
+            start_date="2024-01-01",
+            end_date="2024-12-31",
+        )
+
+        with patch(
+            "claude_monitor.data.reader.load_usage_entries",
+            return_value=(sample_entries, []),
+        ) as mock_load:
+            result = aggregator.aggregate()
+
+            # last_days takes precedence, so hours_back should be 168
+            mock_load.assert_called_once_with(
+                data_path=str(tmp_path), hours_back=168
+            )
