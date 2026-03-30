@@ -496,6 +496,7 @@ class TableViewsController:
         plan: str,
         token_limit: int,
         console: Optional[Console] = None,
+        period_label: Optional[str] = None,
     ) -> None:
         """Display aggregated view with table and summary.
 
@@ -506,6 +507,7 @@ class TableViewsController:
             plan: Plan type
             token_limit: Token limit for the plan
             console: Optional Console instance
+            period_label: Optional period label from time filters
         """
         if not data:
             no_data_display = self.create_no_data_display(view_mode)
@@ -533,7 +535,9 @@ class TableViewsController:
         }
 
         # Determine period for summary
-        if view_mode == "daily":
+        if period_label:
+            period = period_label
+        elif view_mode == "daily":
             period = f"{data[0]['date']} to {data[-1]['date']}" if data else "No data"
         else:  # monthly
             period = f"{data[0]['month']} to {data[-1]['month']}" if data else "No data"
