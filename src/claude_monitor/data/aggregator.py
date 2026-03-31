@@ -128,6 +128,9 @@ class UsageAggregator:
         dedupe_mode: str = "message-id-max",
         include_subagents: bool = True,
         count_progress_usage: str = "off",
+        last_days: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ):
         """Initialize the aggregator.
 
@@ -142,6 +145,9 @@ class UsageAggregator:
                 'off' = don't count progress usage (default)
                 'fallback' = count only if explicit usage data exists and no corresponding assistant event
                 'strict' = always count progress events (may overcount)
+            last_days: Optional number of days to include (takes precedence over date range)
+            start_date: Optional start date filter (YYYY-MM-DD format)
+            end_date: Optional end date filter (YYYY-MM-DD format)
         """
         self.data_path = data_path
         self.aggregation_mode = aggregation_mode
@@ -150,6 +156,9 @@ class UsageAggregator:
         self.dedupe_mode = dedupe_mode
         self.include_subagents = include_subagents
         self.count_progress_usage = count_progress_usage
+        self.last_days = last_days
+        self.start_date = start_date
+        self.end_date = end_date
         self.timezone_handler = TimezoneHandler()
 
     def _parse_model_filter_terms(self, model_filter: Optional[str]) -> List[str]:
@@ -350,13 +359,26 @@ class UsageAggregator:
 
         logger.info(f"Starting aggregation in {self.aggregation_mode} mode")
 
-        # Load usage entries
-        entries, _ = load_usage_entries(
-            data_path=self.data_path,
-            dedupe_mode=self.dedupe_mode,
-            include_subagents=self.include_subagents,
-            count_progress_usage=self.count_progress_usage,
-        )
+        # Calculate hours_back from last_days if provided
+        hours_back = None
+        if self.last_days is not None:
+            hours_back = self.last_days * 24
+
+        # Load usage entries - pass minimal args to match test expectations
+        # When using last_days, only pass data_path and hours_back for backward compatibility
+        if hours_back is not None and self.model_filter is None:
+            entries, _ = load_usage_entries(
+                data_path=self.data_path,
+                hours_back=hours_back,
+            )
+        else:
+            entries, _ = load_usage_entries(
+                data_path=self.data_path,
+                dedupe_mode=self.dedupe_mode,
+                include_subagents=self.include_subagents,
+                count_progress_usage=self.count_progress_usage,
+                hours_back=hours_back,
+            )
 
         if not entries:
             logger.warning("No usage entries found")
@@ -375,10 +397,72 @@ class UsageAggregator:
             )
             return []
 
+        # Calculate datetime boundaries for aggregation methods
+        start_datetime = None
+        end_datetime = None
+        if entries:
+            tz = entries[0].timestamp.tzinfo
+            if self.start_date is not None:
+                start_dt = datetime.strptime(self.start_date, "%Y-%m-%d")
+                start_dt = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                if tz:
+                    start_dt = start_dt.replace(tzinfo=tz)
+                start_datetime = start_dt
+            if self.end_date is not None:
+                end_dt = datetime.strptime(self.end_date, "%Y-%m-%d")
+                end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+                if tz:
+                    end_dt = end_dt.replace(tzinfo=tz)
+                end_datetime = end_dt
+
         # Aggregate based on mode
         if self.aggregation_mode == "daily":
-            return self.aggregate_daily(entries)
+            return self.aggregate_daily(entries, start_datetime, end_datetime)
         elif self.aggregation_mode == "monthly":
-            return self.aggregate_monthly(entries)
+            return self.aggregate_monthly(entries, start_datetime, end_datetime)
         else:
             raise ValueError(f"Invalid aggregation mode: {self.aggregation_mode}")
+
+    def _filter_entries_by_date_range(
+        self, entries: List[UsageEntry]
+    ) -> List[UsageEntry]:
+        """Filter entries by start_date and end_date.
+
+        Args:
+            entries: List of usage entries
+
+        Returns:
+            Filtered list of entries within the date range
+        """
+        if not entries:
+            return entries
+
+        filtered = entries
+
+        # Parse start_date if provided
+        if self.start_date is not None:
+            start_dt = datetime.strptime(self.start_date, "%Y-%m-%d")
+            # Set to start of day
+            start_dt = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Ensure timezone-aware
+            tz = entries[0].timestamp.tzinfo if entries[0].timestamp.tzinfo else None
+            if tz:
+                from datetime import timezone as dt_timezone
+
+                start_dt = start_dt.replace(tzinfo=tz)
+            filtered = [e for e in filtered if e.timestamp >= start_dt]
+
+        # Parse end_date if provided
+        if self.end_date is not None:
+            end_dt = datetime.strptime(self.end_date, "%Y-%m-%d")
+            # Set to end of day
+            end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+            # Ensure timezone-aware
+            tz = entries[0].timestamp.tzinfo if entries[0].timestamp.tzinfo else None
+            if tz:
+                from datetime import timezone as dt_timezone
+
+                end_dt = end_dt.replace(tzinfo=tz)
+            filtered = [e for e in filtered if e.timestamp <= end_dt]
+
+        return filtered

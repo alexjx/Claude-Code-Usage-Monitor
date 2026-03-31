@@ -16,6 +16,13 @@ class CostMode(Enum):
     CALCULATED = "calculate"
 
 
+class DedupeMode(Enum):
+    """Deduplication modes for usage entry processing."""
+
+    MESSAGE_ID_MAX = "message-id-max"
+    LEGACY = "legacy"
+
+
 @dataclass
 class UsageEntry:
     """Individual usage record from Claude usage data."""

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import pytz
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from claude_monitor import __version__
@@ -39,8 +39,8 @@ class LastUsedParams:
 
             if settings.custom_limit_tokens:
                 params["custom_limit_tokens"] = settings.custom_limit_tokens
-            if settings.model_filter:
-                params["model_filter"] = settings.model_filter
+            # Note: model_filter and time filters (last_days, start_date, end_date) are NOT saved
+            # to prevent stale filters from persisting across sessions
 
             self.config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -199,6 +199,67 @@ class Settings(BaseSettings):
         description="How to count progress/working events: 'off'=don't count progress usage, 'fallback'=count only if explicit usage data exists, 'strict'=always count progress events (may overcount). Default is 'off' for backward compatibility.",
     )
 
+    last_days: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Show data for last N days (alternative to date range)",
+    )
+
+    start_date: Optional[str] = Field(
+        default=None,
+        description="Start date filter (YYYY-MM-DD format). Only applies to daily/monthly views.",
+    )
+
+    end_date: Optional[str] = Field(
+        default=None,
+        description="End date filter (YYYY-MM-DD format). Only applies to daily/monthly views.",
+    )
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
+        """Validate date format is YYYY-MM-DD."""
+        if v is None:
+            return v
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Invalid date format: {v}. Expected YYYY-MM-DD")
+        return v
+
+    @field_validator("last_days")
+    @classmethod
+    def validate_last_days_positive(cls, v: Optional[int]) -> Optional[int]:
+        """Validate last_days is positive."""
+        if v is not None and v < 1:
+            raise ValueError("last_days must be >= 1")
+        return v
+
+    @model_validator(mode="after")
+    def validate_time_filter_combinations(self) -> "Settings":
+        """Validate time filter field combinations."""
+        last_days = self.last_days
+        start_date = self.start_date
+        end_date = self.end_date
+
+        # last_days cannot be combined with date range
+        if last_days is not None:
+            if start_date is not None or end_date is not None:
+                raise ValueError(
+                    "Cannot use --last-days with --start-date or --end-date"
+                )
+
+        # Validate date range logic
+        if start_date is not None and end_date is not None:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            if start > end:
+                raise ValueError(
+                    f"Start date {start_date} must be before or equal to end date {end_date}"
+                )
+
+        return self
+
     @field_validator("plan", mode="before")
     @classmethod
     def validate_plan(cls, v: Any) -> str:
@@ -351,6 +412,13 @@ class Settings(BaseSettings):
                     continue
                 if key not in cli_provided_fields:
                     setattr(settings, key, value)
+
+            # Defensive cleanup: clear filter fields if not provided via CLI
+            # to prevent stale filters from persisting
+            FILTER_FIELDS = {"model_filter", "last_days", "start_date", "end_date"}
+            for field in FILTER_FIELDS:
+                if field not in cli_provided_fields:
+                    setattr(settings, field, None)
 
             if (
                 "plan" in cli_provided_fields
