@@ -116,8 +116,20 @@ def _run_monitoring(args: argparse.Namespace) -> None:
     else:
         console = get_themed_console()
 
-    old_terminal_settings = setup_terminal()
     live_display_active: bool = False
+
+    # Handle different view modes - table views don't need terminal setup
+    if view_mode in ["daily", "monthly"]:
+        data_paths: List[Path] = discover_claude_data_paths()
+        if not data_paths:
+            print_themed("No Claude data directory found", style="error")
+            return
+        data_path: Path = data_paths[0]
+        _run_table_view(args, data_path, view_mode, console)
+        return
+
+    # Realtime mode needs terminal setup for live display
+    old_terminal_settings = setup_terminal()
 
     try:
         data_paths: List[Path] = discover_claude_data_paths()
@@ -128,11 +140,6 @@ def _run_monitoring(args: argparse.Namespace) -> None:
         data_path: Path = data_paths[0]
         logger = logging.getLogger(__name__)
         logger.info(f"Using data path: {data_path}")
-
-        # Handle different view modes
-        if view_mode in ["daily", "monthly"]:
-            _run_table_view(args, data_path, view_mode, console)
-            return
 
         token_limit: int = _get_initial_token_limit(args, str(data_path))
 
@@ -417,19 +424,6 @@ def _run_table_view(
             show_agent_breakdown=getattr(args, "show_agent_breakdown", False),
             dedupe_mode=getattr(args, "dedupe_mode", "message-id-max"),
         )
-
-        # Wait for user to press Ctrl+C
-        print_themed("\nPress Ctrl+C to exit", style="info")
-        try:
-            # Use signal.pause() for more efficient waiting
-            try:
-                signal.pause()
-            except AttributeError:
-                # Fallback for Windows which doesn't support signal.pause()
-                while True:
-                    time.sleep(1)
-        except KeyboardInterrupt:
-            print_themed("\nExiting...", style="info")
 
     except Exception as e:
         logger.error(f"Error in table view: {e}", exc_info=True)
