@@ -219,3 +219,7 @@ lint*.sh
 
 # Worktrees
 .worktrees/
+
+# agents
+.agents/
+.claude/
