@@ -178,6 +178,7 @@ class TestFunctions:
                 start_date=None,
                 end_date=None,
             )
+            mock_aggregator.aggregate.assert_called_once()
             mock_controller_cls.return_value.display_aggregated_view.assert_called_once()
             mock_pause.assert_not_called()
 
@@ -230,6 +231,7 @@ class TestFunctions:
                 start_date=None,
                 end_date=None,
             )
+            mock_aggregator.aggregate.assert_called_once()
             mock_pause.assert_not_called()
 
     def test_run_table_view_passes_date_range_params(self) -> None:
@@ -281,6 +283,7 @@ class TestFunctions:
                 start_date="2026-01-01",
                 end_date="2026-03-31",
             )
+            mock_aggregator.aggregate.assert_called_once()
             mock_pause.assert_not_called()
 
     def test_run_table_view_passes_period_label_when_last_days_set(self) -> None:
@@ -323,6 +326,7 @@ class TestFunctions:
 
             _run_table_view(args, Path("/tmp"), "daily", Mock())
 
+            mock_aggregator.aggregate.assert_called_once()
             mock_controller_cls.return_value.display_aggregated_view.assert_called_once()
             call_kwargs = mock_controller_cls.return_value.display_aggregated_view.call_args
             assert call_kwargs.kwargs.get("period_label") == "Last 30 days"
@@ -368,6 +372,7 @@ class TestFunctions:
 
             _run_table_view(args, Path("/tmp"), "daily", Mock())
 
+            mock_aggregator.aggregate.assert_called_once()
             mock_controller_cls.return_value.display_aggregated_view.assert_called_once()
             call_kwargs = mock_controller_cls.return_value.display_aggregated_view.call_args
             assert call_kwargs.kwargs.get("period_label") == "2026-01-01 to 2026-03-31"
