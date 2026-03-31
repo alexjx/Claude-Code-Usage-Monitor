@@ -434,19 +434,6 @@ def _run_table_view(
             period_label=period_label,
         )
 
-        # Wait for user to press Ctrl+C
-        print_themed("\nPress Ctrl+C to exit", style="info")
-        try:
-            # Use signal.pause() for more efficient waiting
-            try:
-                signal.pause()
-            except AttributeError:
-                # Fallback for Windows which doesn't support signal.pause()
-                while True:
-                    time.sleep(1)
-        except KeyboardInterrupt:
-            print_themed("\nExiting...", style="info")
-
     except Exception as e:
         logger.error(f"Error in table view: {e}", exc_info=True)
         print_themed(f"Error displaying {view_mode} view: {e}", style="error")
