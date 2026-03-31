@@ -116,8 +116,20 @@ def _run_monitoring(args: argparse.Namespace) -> None:
     else:
         console = get_themed_console()
 
-    old_terminal_settings = setup_terminal()
     live_display_active: bool = False
+
+    # Handle different view modes - table views don't need terminal setup
+    if view_mode in ["daily", "monthly"]:
+        data_paths: List[Path] = discover_claude_data_paths()
+        if not data_paths:
+            print_themed("No Claude data directory found", style="error")
+            return
+        data_path: Path = data_paths[0]
+        _run_table_view(args, data_path, view_mode, console)
+        return
+
+    # Realtime mode needs terminal setup for live display
+    old_terminal_settings = setup_terminal()
 
     try:
         data_paths: List[Path] = discover_claude_data_paths()
@@ -128,11 +140,6 @@ def _run_monitoring(args: argparse.Namespace) -> None:
         data_path: Path = data_paths[0]
         logger = logging.getLogger(__name__)
         logger.info(f"Using data path: {data_path}")
-
-        # Handle different view modes
-        if view_mode in ["daily", "monthly"]:
-            _run_table_view(args, data_path, view_mode, console)
-            return
 
         token_limit: int = _get_initial_token_limit(args, str(data_path))
 
