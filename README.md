@@ -260,7 +260,7 @@ claude-monitor --clear
 
 #### With uv tool installation (Recommended)
 ```bash
-# Default (Custom plan with auto-detection)
+# Default (Custom plan with auto-detection) - realtime monitoring
 claude-monitor
 
 # Alternative commands
@@ -269,7 +269,7 @@ cmonitor             # Short alias
 ccmonitor            # Short alternative
 ccm                  # Shortest alias
 
-# Exit the monitor
+# Exit the monitor (realtime mode only)
 # Press Ctrl+C to gracefully exit
 ```
 
@@ -310,13 +310,13 @@ claude-monitor --reset-hour 22
 #### Usage View Configuration
 
 ```bash
-# Real-time monitoring with live updates (Default)
+# Real-time monitoring with live updates (Default) - Press Ctrl+C to exit
 claude-monitor --view realtime
 
-# Daily token usage aggregated in table format
+# Daily token usage aggregated in table format (exits immediately)
 claude-monitor --view daily
 
-# Monthly token usage aggregated in table format
+# Monthly token usage aggregated in table format (exits immediately)
 claude-monitor --view monthly
 
 ```
@@ -665,10 +665,8 @@ claude-monitor --timezone UTC --reset-hour 12
 **Scenario**: You just want to see current status without configuration.
 
 ```bash
-# Just run it with defaults
+# Just run it with defaults (realtime mode - Press Ctrl+C to exit)
 claude-monitor
-
-# Press Ctrl+C after checking status
 ```
 
 #### 📊 Usage Analysis Views
