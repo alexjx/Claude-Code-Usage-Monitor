@@ -170,7 +170,7 @@ class SessionDisplayComponent:
                 display_name = agent_key
 
             lines.append(
-                f"{indent}• [value]{display_name}:[/] [warning]{agent_tokens:,}[/][dim] tokens{pct_str}[/]"
+                f"{indent}• [value]{display_name}:[/] [warning]{agent_tokens:,}[/] [dim]tokens{pct_str}[/]"
             )
 
         return lines

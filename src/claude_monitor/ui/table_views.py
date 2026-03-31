@@ -684,8 +684,8 @@ class TableViewsController:
             cost_pct = (stat["cost"] / total_cost * 100.0) if total_cost > 0 else 0.0
 
             lines.append(
-                f"• [value]{stat['name']}:[/] [warning]{stat['tokens']:,}[/][dim] tokens[/] "
-                f"({pct:.1f}%) | [success]{stat['cost']:.4f}[/][dim] USD[/] ({cost_pct:.1f}%)"
+                f"• [value]{stat['name']}:[/] [warning]{stat['tokens']:,}[/] [dim]tokens[/]"
+                f" ({pct:.1f}%) | [success]{stat['cost']:.4f}[/] [dim]USD[/] ({cost_pct:.1f}%)"
             )
 
         text = Text("\n".join(lines), style=self.value_style)
