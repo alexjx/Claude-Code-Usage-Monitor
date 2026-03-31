@@ -140,6 +140,9 @@ class TestFunctions:
         args.dedupe_mode = "message-id-max"
         args.include_subagents = True
         args.count_progress_usage = "off"
+        args.last_days = None
+        args.start_date = None
+        args.end_date = None
 
         with (
             patch("claude_monitor.cli.main.UsageAggregator") as mock_aggregator_cls,
@@ -177,5 +180,8 @@ class TestFunctions:
                 dedupe_mode="message-id-max",
                 include_subagents=True,
                 count_progress_usage="off",
+                last_days=None,
+                start_date=None,
+                end_date=None,
             )
             mock_controller_cls.return_value.display_aggregated_view.assert_called_once()

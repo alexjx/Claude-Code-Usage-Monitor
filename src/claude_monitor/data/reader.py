@@ -213,8 +213,18 @@ def _process_single_file(
                     data = json.loads(line)
                     entries_read += 1
 
+                    # Always check cutoff_time filter (even when skipping dedup)
+                    if cutoff_time:
+                        timestamp_str = data.get("timestamp")
+                        if timestamp_str:
+                            processor = TimestampProcessor(timezone_handler)
+                            timestamp = processor.parse_timestamp(timestamp_str)
+                            if timestamp and timestamp < cutoff_time:
+                                entries_filtered += 1
+                                continue
+
                     if not skip_dedup and not _should_process_entry(
-                        data, cutoff_time, processed_hashes, timezone_handler
+                        data, None, processed_hashes, timezone_handler
                     ):
                         entries_filtered += 1
                         continue

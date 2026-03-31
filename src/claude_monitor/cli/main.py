@@ -401,6 +401,9 @@ def _run_table_view(
             dedupe_mode=getattr(args, "dedupe_mode", "message-id-max"),
             include_subagents=args.include_subagents,
             count_progress_usage=getattr(args, "count_progress_usage", "off"),
+            last_days=getattr(args, "last_days", None),
+            start_date=getattr(args, "start_date", None),
+            end_date=getattr(args, "end_date", None),
         )
 
         # Create table controller

@@ -480,5 +480,8 @@ class Settings(BaseSettings):
         args.include_subagents = self.include_subagents
         args.show_agent_breakdown = self.show_agent_breakdown
         args.count_progress_usage = self.count_progress_usage
+        args.last_days = self.last_days
+        args.start_date = self.start_date
+        args.end_date = self.end_date
 
         return args
