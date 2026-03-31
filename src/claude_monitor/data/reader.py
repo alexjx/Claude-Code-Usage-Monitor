@@ -16,7 +16,7 @@ from claude_monitor.core.data_processors import (
     TimestampProcessor,
     TokenExtractor,
 )
-from claude_monitor.core.models import CostMode, DedupeMode, UsageEntry
+from claude_monitor.core.models import CostMode, UsageEntry
 from claude_monitor.core.pricing import PricingCalculator
 from claude_monitor.error_handling import report_file_error
 from claude_monitor.utils.time_utils import TimezoneHandler
@@ -34,7 +34,9 @@ def load_usage_entries(
     hours_back: Optional[int] = None,
     mode: CostMode = CostMode.AUTO,
     include_raw: bool = False,
-    dedupe_mode: DedupeMode = DedupeMode.MESSAGE_ID_MAX,
+    dedupe_mode: str = "message-id-max",
+    include_subagents: bool = True,
+    count_progress_usage: str = "off",
 ) -> Tuple[List[UsageEntry], Optional[List[Dict[str, Any]]]]:
     """Load and convert JSONL files to UsageEntry objects.
 
@@ -43,9 +45,15 @@ def load_usage_entries(
         hours_back: Only include entries from last N hours
         mode: Cost calculation mode
         include_raw: Whether to return raw JSON data alongside entries
-        dedupe_mode: Deduplication mode - MESSAGE_ID_MAX (default) uses message_id only
-            and keeps entry with highest tokens per message_id; LEGACY uses message_id +
-            request_id for backward compatibility with older logs
+        dedupe_mode: Deduplication mode - 'message-id-max' keeps usage-max snapshot
+                     for same message.id; 'legacy' uses message_id+request_id
+        include_subagents: Whether to include subagent entries (default True).
+                          If False, entries from subagent paths or with isSidechain=true
+                          will be filtered out.
+        count_progress_usage: How to count progress/working events
+                          'off' (default) = don't count progress usage
+                          'fallback' = count only if no corresponding assistant event exists
+                          'strict' = always count progress events
 
     Returns:
         Tuple of (usage_entries, raw_data) where raw_data is None unless include_raw=True
@@ -65,20 +73,21 @@ def load_usage_entries(
 
     all_entries: List[UsageEntry] = []
     raw_entries: Optional[List[Dict[str, Any]]] = [] if include_raw else None
-    # Track best entry per message_id for message-id-max mode
-    # message_id -> (entry, total_tokens)
-    dedupe_tracker: Dict[str, Tuple[UsageEntry, int]] = {}
+    processed_hashes: Set[str] = set()
+
+    # For message-id-max mode, we skip early deduplication and do it post-processing
+    skip_dedup = dedupe_mode == "message-id-max"
 
     for file_path in jsonl_files:
         entries, raw_data = _process_single_file(
             file_path,
             mode,
             cutoff_time,
-            dedupe_mode,
-            dedupe_tracker,
+            processed_hashes,
             include_raw,
             timezone_handler,
             pricing_calculator,
+            skip_dedup=skip_dedup,
         )
         all_entries.extend(entries)
         if include_raw and raw_data:
@@ -86,12 +95,48 @@ def load_usage_entries(
 
     all_entries.sort(key=lambda e: e.timestamp)
 
-    # Resolve agent attribution via sourceToolAssistantUUID backtracking
-    all_entries = _resolve_agent_attribution(all_entries)
+    # Apply message-id-max deduplication after collection
+    if dedupe_mode == "message-id-max":
+        all_entries = _apply_usage_max_dedup(all_entries)
 
-    # Apply message-id-max deduplication: keep only best entry per message_id
-    if dedupe_mode == DedupeMode.MESSAGE_ID_MAX and dedupe_tracker:
-        all_entries = _apply_message_id_max_dedup(all_entries, dedupe_tracker)
+    # Filter out subagents if requested
+    if not include_subagents:
+        original_count = len(all_entries)
+        all_entries = [e for e in all_entries if e.attribution_type != "subagent"]
+        filtered_count = original_count - len(all_entries)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} subagent entries")
+
+    # Apply count_progress_usage filtering
+    if count_progress_usage != "strict":
+        # Track which message_ids have assistant events
+        assistant_message_ids: Set[str] = set()
+        progress_message_ids: Set[str] = set()
+
+        for entry in all_entries:
+            if entry.message_id:
+                if entry.event_type == "assistant":
+                    assistant_message_ids.add(entry.message_id)
+                elif entry.event_type == "progress":
+                    progress_message_ids.add(entry.message_id)
+
+        # Apply filtering based on count_progress_usage
+        original_count = len(all_entries)
+        if count_progress_usage == "off":
+            # Filter out all progress events
+            all_entries = [
+                e for e in all_entries if e.event_type != "progress"
+            ]
+        elif count_progress_usage == "fallback":
+            # Only include progress events if no corresponding assistant event exists
+            all_entries = [
+                e for e in all_entries
+                if e.event_type != "progress" or e.message_id not in assistant_message_ids
+            ]
+
+        filtered_count = original_count - len(all_entries)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} progress entries (count_progress_usage={count_progress_usage})")
 
     logger.info(f"Processed {len(all_entries)} entries from {len(jsonl_files)} files")
 
@@ -136,19 +181,22 @@ def _find_jsonl_files(data_path: Path) -> List[Path]:
     return list(data_path.rglob("*.jsonl"))
 
 
-def _process_single_file_v2(
+def _process_single_file(
     file_path: Path,
     mode: CostMode,
     cutoff_time: Optional[datetime],
-    dedupe_mode: DedupeMode,
-    dedupe_tracker: Dict[str, Tuple[UsageEntry, int]],
+    processed_hashes: Set[str],
     include_raw: bool,
     timezone_handler: TimezoneHandler,
     pricing_calculator: PricingCalculator,
+    skip_dedup: bool = False,
 ) -> Tuple[List[UsageEntry], Optional[List[Dict[str, Any]]]]:
     """Process a single JSONL file."""
     entries: List[UsageEntry] = []
     raw_data: Optional[List[Dict[str, Any]]] = [] if include_raw else None
+
+    # Check if file is from subagent path (check parent directories)
+    is_from_subagent_path = "subagents" in Path(file_path).parts
 
     try:
         entries_read = 0
@@ -165,30 +213,21 @@ def _process_single_file_v2(
                     data = json.loads(line)
                     entries_read += 1
 
-                    if dedupe_mode == DedupeMode.MESSAGE_ID_MAX:
-                        # In message-id-max mode, always process - dedup happens post-processing
-                        if not _should_process_entry_no_dedup(
-                            data, cutoff_time, timezone_handler
-                        ):
-                            entries_filtered += 1
-                            continue
-                    else:
-                        # Legacy mode: use message_id + request_id dedup
-                        if not _should_process_entry_legacy(
-                            data, cutoff_time, dedupe_tracker, timezone_handler
-                        ):
-                            entries_filtered += 1
-                            continue
+                    if not skip_dedup and not _should_process_entry(
+                        data, cutoff_time, processed_hashes, timezone_handler
+                    ):
+                        entries_filtered += 1
+                        continue
 
                     entry = _map_to_usage_entry(
-                        data, mode, timezone_handler, pricing_calculator
+                        data, mode, timezone_handler, pricing_calculator,
+                        is_from_subagent_path=is_from_subagent_path
                     )
                     if entry:
                         entries_mapped += 1
                         entries.append(entry)
-                        _update_dedupe_tracker(
-                            data, entry, dedupe_mode, dedupe_tracker
-                        )
+                        if not skip_dedup:
+                            _update_processed_hashes(data, processed_hashes)
 
                     if include_raw:
                         raw_data.append(data)
@@ -215,117 +254,13 @@ def _process_single_file_v2(
     return entries, raw_data
 
 
-def _process_single_file(
-    file_path: Path,
-    mode: CostMode,
-    cutoff_time: Optional[datetime],
-    arg4: Any,
-    arg5: Any,
-    arg6: Any,
-    arg7: Any,
-    arg8: Any = None,
-) -> Tuple[List[UsageEntry], Optional[List[Dict[str, Any]]]]:
-    """Process a single JSONL file.
-
-    This is a wrapper that handles two calling conventions:
-    - New (8 params): file_path, mode, cutoff_time, dedupe_mode, dedupe_tracker, include_raw, timezone_handler, pricing_calculator
-    - Old (7 params): file_path, mode, cutoff_time, processed_hashes, include_raw, timezone_handler, pricing_calculator
-
-    Detected by checking if arg4 is a DedupeMode (new) or a set (old).
-
-    For LEGACY mode with old calling convention, we use the original implementation
-    that calls _should_process_entry and _update_processed_hashes (which are mocked in tests).
-    """
-    if isinstance(arg4, DedupeMode):
-        # New calling convention: arg4=dedupe_mode, arg5=dedupe_tracker, arg6=include_raw, arg7=timezone_handler, arg8=pricing_calculator
-        return _process_single_file_v2(
-            file_path=file_path,
-            mode=mode,
-            cutoff_time=cutoff_time,
-            dedupe_mode=arg4,
-            dedupe_tracker=arg5,
-            include_raw=arg6,
-            timezone_handler=arg7,
-            pricing_calculator=arg8,
-        )
-    else:
-        # Old calling convention: arg4=processed_hashes(set), arg5=include_raw, arg6=timezone_handler, arg7=pricing_calculator
-        # Use the original LEGACY implementation that calls _should_process_entry (mocked in tests)
-        processed_hashes: Set[str] = arg4
-        include_raw: bool = arg5
-        actual_timezone_handler: TimezoneHandler = arg6
-        actual_pricing_calculator: PricingCalculator = arg7
-
-        entries: List[UsageEntry] = []
-        raw_data: Optional[List[Dict[str, Any]]] = [] if include_raw else None
-
-        try:
-            entries_read = 0
-            entries_filtered = 0
-            entries_mapped = 0
-
-            with open(file_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    try:
-                        data = json.loads(line)
-                        entries_read += 1
-
-                        # Use backward-compatible _should_process_entry with set (mocked in tests)
-                        if not _should_process_entry(
-                            data, cutoff_time, processed_hashes, actual_timezone_handler
-                        ):
-                            entries_filtered += 1
-                            continue
-
-                        entry = _map_to_usage_entry(
-                            data, mode, actual_timezone_handler, actual_pricing_calculator
-                        )
-                        if entry:
-                            entries_mapped += 1
-                            entries.append(entry)
-                            _update_processed_hashes(data, processed_hashes)
-
-                        if include_raw:
-                            raw_data.append(data)
-
-                    except json.JSONDecodeError as e:
-                        logger.debug(f"Failed to parse JSON line in {file_path}: {e}")
-                        continue
-
-            logger.debug(
-                f"File {file_path.name}: {entries_read} read, "
-                f"{entries_filtered} filtered out, {entries_mapped} successfully mapped"
-            )
-
-        except Exception as e:
-            logger.warning("Failed to read file %s: %s", file_path, e)
-            report_file_error(
-                exception=e,
-                file_path=str(file_path),
-                operation="read",
-                additional_context={"file_exists": file_path.exists()},
-            )
-            return [], None
-
-        return entries, raw_data
-
-
 def _should_process_entry(
     data: Dict[str, Any],
     cutoff_time: Optional[datetime],
-    dedupe_mode: DedupeMode,
-    dedupe_tracker: Dict[str, Tuple[UsageEntry, int]],
+    processed_hashes: Set[str],
     timezone_handler: TimezoneHandler,
 ) -> bool:
-    """Check if entry should be processed based on time and uniqueness.
-
-    For MESSAGE_ID_MAX mode: only checks time cutoff, dedup handled post-processing.
-    For LEGACY mode: checks time cutoff AND message_id+request_id dedup.
-    """
+    """Check if entry should be processed based on time and uniqueness."""
     if cutoff_time:
         timestamp_str = data.get("timestamp")
         if timestamp_str:
@@ -334,61 +269,12 @@ def _should_process_entry(
             if timestamp and timestamp < cutoff_time:
                 return False
 
-    if dedupe_mode == DedupeMode.MESSAGE_ID_MAX:
-        # Dedup handled post-processing, only check time
-        return True
-
-    # Legacy mode: check message_id + request_id
-    unique_hash = _create_legacy_hash(data)
-    if unique_hash:
-        if unique_hash in dedupe_tracker:
-            return False
-        dedupe_tracker[unique_hash] = True  # type: ignore
-    return True
+    unique_hash = _create_unique_hash(data)
+    return not (unique_hash and unique_hash in processed_hashes)
 
 
-def _should_process_entry_no_dedup(
-    data: Dict[str, Any],
-    cutoff_time: Optional[datetime],
-    timezone_handler: TimezoneHandler,
-) -> bool:
-    """Check if entry should be processed based on time only (no dedup)."""
-    if cutoff_time:
-        timestamp_str = data.get("timestamp")
-        if timestamp_str:
-            processor = TimestampProcessor(timezone_handler)
-            timestamp = processor.parse_timestamp(timestamp_str)
-            if timestamp and timestamp < cutoff_time:
-                return False
-    return True
-
-
-def _should_process_entry_legacy(
-    data: Dict[str, Any],
-    cutoff_time: Optional[datetime],
-    dedupe_tracker: Dict[str, Tuple[UsageEntry, int]],
-    timezone_handler: TimezoneHandler,
-) -> bool:
-    """Check if entry should be processed based on time and legacy dedup."""
-    if cutoff_time:
-        timestamp_str = data.get("timestamp")
-        if timestamp_str:
-            processor = TimestampProcessor(timezone_handler)
-            timestamp = processor.parse_timestamp(timestamp_str)
-            if timestamp and timestamp < cutoff_time:
-                return False
-
-    unique_hash = _create_legacy_hash(data)
-    if unique_hash:
-        # For legacy dedup, we track hashes in dedupe_tracker with None value
-        if unique_hash in dedupe_tracker:
-            return False
-        dedupe_tracker[unique_hash] = None  # type: ignore
-    return True
-
-
-def _create_legacy_hash(data: Dict[str, Any]) -> Optional[str]:
-    """Create unique hash for legacy deduplication (message_id + request_id)."""
+def _create_unique_hash(data: Dict[str, Any]) -> Optional[str]:
+    """Create unique hash for deduplication."""
     message_id = data.get("message_id") or (
         data.get("message", {}).get("id")
         if isinstance(data.get("message"), dict)
@@ -399,144 +285,11 @@ def _create_legacy_hash(data: Dict[str, Any]) -> Optional[str]:
     return f"{message_id}:{request_id}" if message_id and request_id else None
 
 
-# Backward-compatible alias for tests
-_create_unique_hash = _create_legacy_hash
-
-
-def _should_process_entry(
-    data: Dict[str, Any],
-    cutoff_time: Optional[datetime],
-    processed_hashes: Set[str],
-    timezone_handler: TimezoneHandler,
-) -> bool:
-    """Backward-compatible _should_process_entry for tests.
-
-    Note: This uses LEGACY dedupe mode and ignores the dedupe_tracker.
-    For new code, use the dedupe_mode-aware version.
-    """
-    if cutoff_time:
-        timestamp_str = data.get("timestamp")
-        if timestamp_str:
-            processor = TimestampProcessor(timezone_handler)
-            timestamp = processor.parse_timestamp(timestamp_str)
-            if timestamp and timestamp < cutoff_time:
-                return False
-
-    unique_hash = _create_legacy_hash(data)
-    return not (unique_hash and unique_hash in processed_hashes)
-
-
-def _update_processed_hashes(
-    data: Dict[str, Any], processed_hashes: Set[str]
-) -> None:
-    """Backward-compatible _update_processed_hashes for tests.
-
-    Note: This uses LEGACY dedupe mode.
-    For new code, use _update_dedupe_tracker with DedupeMode.
-    """
-    unique_hash = _create_legacy_hash(data)
+def _update_processed_hashes(data: Dict[str, Any], processed_hashes: Set[str]) -> None:
+    """Update the processed hashes set with current entry's hash."""
+    unique_hash = _create_unique_hash(data)
     if unique_hash:
         processed_hashes.add(unique_hash)
-
-
-def _create_message_id_hash(data: Dict[str, Any]) -> Optional[str]:
-    """Create hash using message_id only (for modern logs without request_id)."""
-    message_id = data.get("message_id") or (
-        data.get("message", {}).get("id")
-        if isinstance(data.get("message"), dict)
-        else None
-    )
-    return message_id if message_id else None
-
-
-def _update_dedupe_tracker(
-    data: Dict[str, Any],
-    entry: UsageEntry,
-    dedupe_mode: DedupeMode,
-    dedupe_tracker: Dict[str, Tuple[UsageEntry, int]],
-) -> None:
-    """Update dedupe tracker with current entry.
-
-    For MESSAGE_ID_MAX mode: tracks message_id -> (entry, total_tokens), keeping highest.
-    For LEGACY mode: tracks message_id:request_id -> True (already filtered above).
-    """
-    if dedupe_mode == DedupeMode.MESSAGE_ID_MAX:
-        message_id = _create_message_id_hash(data)
-        if message_id:
-            total_tokens = (
-                entry.input_tokens
-                + entry.output_tokens
-                + entry.cache_creation_tokens
-                + entry.cache_read_tokens
-            )
-            existing = dedupe_tracker.get(message_id)
-            if existing is None or total_tokens > existing[1]:
-                dedupe_tracker[message_id] = (entry, total_tokens)
-
-
-def _resolve_agent_attribution(entries: List[UsageEntry]) -> List[UsageEntry]:
-    """Resolve agent attribution via sourceToolAssistantUUID backtracking.
-
-    Builds a uuid->agent_id mapping from assistant events, then for entries
-    with source_tool_assistant_uuid but no agent_id, resolves the agent_id
-    from the parent assistant event.
-    """
-    if not entries:
-        return entries
-
-    # Build uuid -> agent_id mapping from assistant events
-    uuid_to_agent_id: Dict[str, str] = {}
-    for entry in entries:
-        if entry.agent_id and entry.raw_ref:
-            uuid_to_agent_id[entry.raw_ref] = entry.agent_id
-
-    # Apply backtracking and set scope
-    for entry in entries:
-        # Set scope based on attribution
-        if entry.is_sidechain:
-            entry.scope = "subagent"
-        elif entry.agent_id:
-            entry.scope = "primary_agent"
-        else:
-            entry.scope = "unknown"
-
-        # Backtrack via sourceToolAssistantUUID if agent_id is missing
-        if not entry.agent_id and entry.source_tool_assistant_uuid:
-            parent_agent_id = uuid_to_agent_id.get(entry.source_tool_assistant_uuid)
-            if parent_agent_id:
-                entry.agent_id = parent_agent_id
-                entry.scope = "subagent"  # Backtracked entries are subagent scope
-
-    return entries
-
-
-def _apply_message_id_max_dedup(
-    entries: List[UsageEntry],
-    dedupe_tracker: Dict[str, Tuple[UsageEntry, int]],
-) -> List[UsageEntry]:
-    """Apply message-id-max deduplication: keep only best entry per message_id.
-
-    Returns entries sorted by timestamp with duplicates removed based on
-    message_id, keeping the entry with highest total_tokens for each message_id.
-    """
-    if not dedupe_tracker:
-        return entries
-
-    # Build final list from tracker (entries with highest tokens per message_id)
-    # dedupe_tracker maps message_id -> (best_entry, total_tokens)
-    deduped = list(dedupe_tracker.values())
-    # dedupe_tracker.values() returns tuples of (entry, total_tokens)
-    # We need just the entries
-    deduped_entries = [item[0] for item in deduped]
-
-    # Sort by timestamp to maintain order
-    deduped_entries.sort(key=lambda e: e.timestamp)
-
-    logger.debug(
-        f"message-id-max dedup: {len(entries)} entries -> {len(deduped_entries)} entries"
-    )
-
-    return deduped_entries
 
 
 def _map_to_usage_entry(
@@ -544,6 +297,7 @@ def _map_to_usage_entry(
     mode: CostMode,
     timezone_handler: TimezoneHandler,
     pricing_calculator: PricingCalculator,
+    is_from_subagent_path: bool = False,
 ) -> Optional[UsageEntry]:
     """Map raw data to UsageEntry with proper cost calculation."""
     try:
@@ -571,12 +325,31 @@ def _map_to_usage_entry(
         message = data.get("message", {})
         message_id = data.get("message_id") or message.get("id") or ""
         request_id = data.get("request_id") or data.get("requestId") or "unknown"
+        session_id = data.get("sessionId", "") or ""
 
-        # Extract Agent/Subagent attribution fields
-        is_sidechain = bool(data.get("isSidechain", False))
+        # Extract agent attribution fields
         agent_id = data.get("agentId") or data.get("agent_id") or ""
-        source_tool_assistant_uuid = data.get("sourceToolAssistantUUID") or ""
-        raw_ref = data.get("uuid", "")
+        is_sidechain_raw = data.get("isSidechain") or data.get("is_sidechain") or False
+        # Handle string "true" or boolean
+        if isinstance(is_sidechain_raw, str):
+            is_sidechain = is_sidechain_raw.lower() == "true"
+        else:
+            is_sidechain = bool(is_sidechain_raw)
+        source_tool_assistant_uuid = (
+            data.get("sourceToolAssistantUUID") or data.get("source_tool_assistant_uuid") or ""
+        )
+
+        # Determine attribution type
+        attribution_type = _determine_attribution_type(
+            is_sidechain=is_sidechain or is_from_subagent_path,
+            agent_id=agent_id,
+            source_tool_assistant_uuid=source_tool_assistant_uuid,
+        )
+
+        # Extract event type (defaults to "assistant" for backward compatibility)
+        event_type = data.get("type", "assistant")
+        if event_type not in ("assistant", "progress"):
+            event_type = "assistant"
 
         return UsageEntry(
             timestamp=timestamp,
@@ -588,15 +361,48 @@ def _map_to_usage_entry(
             model=model,
             message_id=message_id,
             request_id=request_id,
-            is_sidechain=is_sidechain,
+            session_id=session_id,
             agent_id=agent_id,
+            is_sidechain=is_sidechain or is_from_subagent_path,
             source_tool_assistant_uuid=source_tool_assistant_uuid,
-            raw_ref=raw_ref,
+            attribution_type=attribution_type,
+            event_type=event_type,
         )
 
     except (KeyError, ValueError, TypeError, AttributeError) as e:
         logger.debug(f"Failed to map entry: {type(e).__name__}: {e}")
         return None
+
+
+def _determine_attribution_type(
+    is_sidechain: bool,
+    agent_id: str,
+    source_tool_assistant_uuid: str,
+) -> str:
+    """Determine attribution type based on attribution rules.
+
+    Attribution rules:
+    - isSidechain=true OR path contains subagents/ => subagent
+    - agentId field exists (and not subagent) => primary_agent
+    - sourceToolAssistantUUID traceable => inherit from parent (still primary_agent if no agent_id)
+    - Unattributable => unknown (but still billed)
+    """
+    # Rule 1: subagent if isSidechain or from subagent path
+    if is_sidechain:
+        return "subagent"
+
+    # Rule 2: direct attribution if agentId exists
+    if agent_id:
+        return "primary_agent"
+
+    # Rule 3: sourceToolAssistantUUID traceable - inherits from parent
+    # For now, we mark this as primary_agent since we can't easily
+    # look up the parent here (would need entry tracking)
+    if source_tool_assistant_uuid:
+        return "primary_agent"
+
+    # Rule 4: unattributable
+    return "unknown"
 
 
 class UsageEntryMapper:
@@ -642,3 +448,131 @@ class UsageEntryMapper:
             "message_id": data.get("message_id") or message.get("id", ""),
             "request_id": data.get("request_id") or data.get("requestId", "unknown"),
         }
+
+
+def _create_tiered_dedup_key(data: Dict[str, Any]) -> Optional[str]:
+    """Create tiered dedup key for message-id-max mode.
+
+    Tiered strategy:
+    1. sessionId + message.id + role + agent_id + isSidechain (primary)
+    2. sessionId + event_uuid (fallback)
+    3. sessionId + parentUuid + sourceToolAssistantUUID + tool_use_id (tool result chain)
+
+    Returns None if no message.id is found.
+    """
+    message_id = data.get("message_id") or (
+        data.get("message", {}).get("id")
+        if isinstance(data.get("message"), dict)
+        else None
+    )
+
+    if not message_id:
+        return None
+
+    # Get optional fields with empty string defaults
+    session_id = data.get("sessionId", "") or ""
+    role = data.get("role", "") or ""
+    agent_id = data.get("agent_id", "") or data.get("agentId", "") or ""
+    is_sidechain = str(data.get("isSidechain", "") or data.get("is_sidechain", "")).lower()
+
+    # Tier 1: sessionId + message.id + role + agent_id + isSidechain
+    if session_id and role:
+        return f"{session_id}:{message_id}:{role}:{agent_id}:{is_sidechain}"
+
+    # Tier 2: sessionId + event_uuid
+    event_uuid = data.get("event_uuid", "") or data.get("eventUuid", "") or ""
+    if session_id and event_uuid:
+        return f"{session_id}:{event_uuid}"
+
+    # Tier 3: sessionId + parentUuid + sourceToolAssistantUUID + tool_use_id
+    parent_uuid = data.get("parentUuid", "") or data.get("parent_uuid", "") or ""
+    source_tool_assistant_uuid = (
+        data.get("sourceToolAssistantUUID", "") or data.get("source_tool_assistant_uuid", "") or ""
+    )
+    tool_use_id = data.get("tool_use_id", "") or data.get("toolUseId", "") or ""
+    if session_id and parent_uuid and source_tool_assistant_uuid and tool_use_id:
+        return f"{session_id}:{parent_uuid}:{source_tool_assistant_uuid}:{tool_use_id}"
+
+    # Fallback: message_id only (when no sessionId)
+    if not session_id:
+        return message_id
+
+    # Last resort: session_id + message_id
+    return f"{session_id}:{message_id}"
+
+
+def _get_entry_usage_total(entry: UsageEntry) -> int:
+    """Get total usage for an entry (for usage-max selection)."""
+    return (
+        entry.input_tokens
+        + entry.output_tokens
+        + entry.cache_creation_tokens
+        + entry.cache_read_tokens
+    )
+
+
+def _apply_usage_max_dedup(entries: List[UsageEntry]) -> List[UsageEntry]:
+    """Apply usage-max deduplication for message-id-max mode.
+
+    Groups entries by tiered dedup key, keeping only the entry with maximum
+    total usage for each key. Entries without message_id are NOT deduplicated
+    (maintains backward compatibility). Logs warnings for non-monotonic usage patterns.
+
+    Args:
+        entries: List of usage entries to deduplicate
+
+    Returns:
+        Deduplicated list of entries with usage-max for each key
+    """
+    if not entries:
+        return entries
+
+    # Separate entries with and without message_id
+    # Entries without message_id are NOT deduplicated (backward compatibility)
+    entries_with_id: List[UsageEntry] = []
+    entries_without_id: List[UsageEntry] = []
+
+    for entry in entries:
+        if entry.message_id:
+            entries_with_id.append(entry)
+        else:
+            entries_without_id.append(entry)
+
+    # Group entries with message_id by the tiered key
+    # This ensures entries from different sessions are not mixed up
+    groups: Dict[str, List[UsageEntry]] = {}
+    for entry in entries_with_id:
+        # Build dict for tiered dedup key function
+        data_for_key: Dict[str, Any] = {
+            "message_id": entry.message_id,
+            "sessionId": entry.session_id,
+        }
+        key = _create_tiered_dedup_key(data_for_key) or entry.message_id
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(entry)
+
+    # For each group, keep only the entry with max usage
+    result = list(entries_without_id)  # Entries without ID are kept as-is
+
+    for key, group_entries in groups.items():
+        if len(group_entries) == 1:
+            result.append(group_entries[0])
+        else:
+            # Find entry with max usage
+            max_entry = max(group_entries, key=_get_entry_usage_total)
+            result.append(max_entry)
+
+            # Check for non-monotonic usage (warn if segments have significantly
+            # different usage patterns that might indicate over-counting)
+            usage_values = [_get_entry_usage_total(e) for e in group_entries]
+            max_usage = max(usage_values)
+            min_usage = min(usage_values)
+
+            if max_usage != min_usage and max_usage > 0:
+                logger.warning(
+                    f"Non-monotonic usage detected for message_id={key}: "
+                    f"segments have usage values {usage_values}, keeping max={max_usage}"
+                )
+
+    return result

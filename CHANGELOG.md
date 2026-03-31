@@ -1,5 +1,45 @@
 # Changelog
 
+## [3.2.0] - 2026-03-27
+
+### Breaking Changes
+
+- **Improved Deduplication (message-id-max)**: The default deduplication mode now uses `message-id-max` which keeps the usage-max snapshot for entries with the same `message.id`. This replaces the old `legacy` mode that used `message_id+request_id` combination. **This may cause historical usage numbers to appear LOWER after upgrade** - this is NOT a bug, it's a correction. The old mode was overcounting multi-segment messages because it couldn't properly deduplicate them.
+
+### 🆕 New Features
+
+- **`--dedupe-mode` flag**: Choose between deduplication strategies:
+  - `message-id-max` (default): Keeps the entry with maximum usage for each `message.id`. Best for modern logs with proper message IDs.
+  - `legacy`: Uses `message_id+request_id` combination. May overcount multi-segment messages that lack `request_id`.
+- **`--include-subagents` flag** (default: `true`): Set to `false` to filter out subagent entries from usage calculations.
+- **`--show-agent-breakdown` flag** (default: `false`): When enabled, displays usage breakdown by agent type (primary_agent, subagent).
+- **`--count-progress-usage` flag** (default: `off`): Controls how progress/working events are counted:
+  - `off` (default): Don't count progress usage (recommended for backward compatibility)
+  - `fallback`: Count only if no corresponding assistant event exists
+  - `strict`: Always count progress events (may result in overcounting)
+
+### 📊 Improved Billing Accuracy
+
+- **Event-type processing**: Better detection and handling of `api_error` events with retry fields
+- **Agent attribution**: Improved tracking of primary_agent vs subagent usage
+- **Progress event filtering**: Optional inclusion of progress/working events with safety modes
+
+### 🔧 Bug Fixes
+
+- Fixed overcounting from multi-segment messages in deduplication
+- Fixed missing attribution for entries lacking `request_id`
+
+### Migration Guide
+
+If you need to reproduce old (overcounted) numbers for comparison:
+
+```bash
+# Use legacy dedup mode to see old behavior
+claude-monitor --dedupe-mode legacy --view daily
+
+# Note: This is NOT recommended for normal use - legacy mode has known overcounting issues
+```
+
 ## [3.1.0] - 2025-07-23
 
 ### 🆕 New Features

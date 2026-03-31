@@ -171,43 +171,8 @@ class SessionAnalyzer:
         # Increment sent messages count
         block.sent_messages_count += 1
 
-        # Agent/Subagent breakdown aggregation
-        self._aggregate_agent_breakdown(block, entry)
-
-    def _aggregate_agent_breakdown(
-        self, block: SessionBlock, entry: UsageEntry
-    ) -> None:
-        """Aggregate usage into agent_breakdown by agent_id with scope field.
-
-        Buckets by agent_id (uses scope as bucket key when agent_id is empty/unknown).
-        Each bucket stores scope alongside token/cost metrics.
-        """
-        if not hasattr(block, "agent_breakdown") or block.agent_breakdown is None:
-            block.agent_breakdown = {}
-
-        # Use agent_id as bucket key; fall back to scope if agent_id is empty
-        bucket_key = entry.agent_id if entry.agent_id else entry.scope
-
-        if bucket_key not in block.agent_breakdown:
-            block.agent_breakdown[bucket_key] = {
-                "scope": entry.scope,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cache_creation_tokens": 0,
-                "cache_read_tokens": 0,
-                "cost_usd": 0.0,
-                "entries_count": 0,
-                "message_count": 0,
-            }
-
-        breakdown: Dict[str, Union[int, float]] = block.agent_breakdown[bucket_key]
-        breakdown["input_tokens"] += entry.input_tokens
-        breakdown["output_tokens"] += entry.output_tokens
-        breakdown["cache_creation_tokens"] += entry.cache_creation_tokens
-        breakdown["cache_read_tokens"] += entry.cache_read_tokens
-        breakdown["cost_usd"] += entry.cost_usd or 0.0
-        breakdown["entries_count"] += 1
-        breakdown["message_count"] += 1
+        # Agent breakdown aggregation
+        self._add_entry_to_agent_breakdown(block, entry)
 
     def _finalize_block(self, block: SessionBlock) -> None:
         """Set actual end time and calculate totals."""
@@ -216,6 +181,43 @@ class SessionAnalyzer:
 
         # Update sent_messages_count
         block.sent_messages_count = len(block.entries)
+
+    def _add_entry_to_agent_breakdown(
+        self, block: SessionBlock, entry: UsageEntry
+    ) -> None:
+        """Add entry to block's agent breakdown aggregation.
+
+        Agent breakdown tracks token usage by attribution type (primary_agent,
+        subagent, unknown) and optionally by agent_id.
+        """
+        attribution_type = entry.attribution_type or "unknown"
+
+        # Determine the key for agent breakdown
+        # Use attribution_type as primary key, agent_id as secondary if available
+        if entry.agent_id:
+            agent_key = f"{attribution_type}:{entry.agent_id}"
+        else:
+            agent_key = attribution_type
+
+        if agent_key not in block.agent_breakdown:
+            block.agent_breakdown[agent_key] = {
+                "attribution_type": attribution_type,
+                "agent_id": entry.agent_id or None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+                "cost_usd": 0.0,
+                "entries_count": 0,
+            }
+
+        agent_stats = block.agent_breakdown[agent_key]
+        agent_stats["input_tokens"] += entry.input_tokens
+        agent_stats["output_tokens"] += entry.output_tokens
+        agent_stats["cache_creation_tokens"] += entry.cache_creation_tokens
+        agent_stats["cache_read_tokens"] += entry.cache_read_tokens
+        agent_stats["cost_usd"] += entry.cost_usd or 0.0
+        agent_stats["entries_count"] += 1
 
     def _check_for_gap(
         self, last_block: SessionBlock, next_entry: UsageEntry
@@ -261,33 +263,63 @@ class SessionAnalyzer:
         entry_type = raw_data.get("type")
 
         if entry_type == "system":
+            # Check for api_error subtype with structured retry info
+            detail = raw_data.get("detail", {})
+            if isinstance(detail, dict) and detail.get("type") == "api_error":
+                return self._process_api_error(raw_data, detail)
             return self._process_system_message(raw_data)
         if entry_type == "user":
             return self._process_user_message(raw_data)
 
         return None
 
+    def _process_api_error(
+        self, raw_data: Dict[str, Any], detail: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Process system.api_error events with structured retry information.
+
+        Args:
+            raw_data: The raw JSONL entry
+            detail: The detail object containing api_error info
+
+        Returns:
+            Limit info dict with retry details or None
+        """
+        timestamp_str = raw_data.get("timestamp")
+        if not timestamp_str:
+            return None
+
+        try:
+            timestamp = self.timezone_handler.parse_timestamp(timestamp_str)
+        except (ValueError, TypeError):
+            return None
+
+        # Extract retry information
+        retry_in_ms = detail.get("retryInMs")
+        max_retries = detail.get("maxRetries")
+        retry_attempt = detail.get("retryAttempt")
+
+        # Only process if we have retry info
+        if retry_in_ms is None and max_retries is None:
+            return None
+
+        block_context = self._extract_block_context(raw_data)
+
+        return {
+            "type": "api_error",
+            "timestamp": timestamp,
+            "content": detail.get("message", "API error with retry"),
+            "retry_in_ms": retry_in_ms,
+            "max_retries": max_retries,
+            "retry_attempt": retry_attempt,
+            "raw_data": raw_data,
+            "block_context": block_context,
+        }
+
     def _process_system_message(
         self, raw_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Process system messages for limit detection."""
-        # Check for structured api_error with retry info first
-        # Multiple paths: detail.type, detail.subtype, raw.type, raw.subtype
-        detail = raw_data.get("detail")
-        is_api_error = False
-        error_detail: Dict[str, Any] = {}
-        if isinstance(detail, dict):
-            if detail.get("type") == "api_error" or detail.get("subtype") == "api_error":
-                is_api_error = True
-                error_detail = detail
-        if not is_api_error:
-            if raw_data.get("type") == "api_error" or raw_data.get("subtype") == "api_error":
-                is_api_error = True
-                # Use detail if available, otherwise empty dict
-                error_detail = detail if isinstance(detail, dict) else {}
-        if is_api_error:
-            return self._process_api_error(raw_data, error_detail)
-
         content = raw_data.get("content", "")
         if not isinstance(content, str):
             return None
@@ -329,58 +361,6 @@ class SessionAnalyzer:
 
         except (ValueError, TypeError):
             return None
-
-    def _process_api_error(
-        self, raw_data: Dict[str, Any], detail: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Process structured api_error events with retry info."""
-        message = detail.get("message", "")
-        retry_in_ms = detail.get("retryInMs")
-        max_retries = detail.get("maxRetries")
-        retry_attempt = detail.get("retryAttempt")
-
-        # Only detect as limit if has retry info or rate limit keyword
-        has_retry_info = retry_in_ms is not None or max_retries is not None
-        is_rate_limit = "rate limit" in message.lower() if message else False
-
-        if not has_retry_info and not is_rate_limit:
-            return None
-
-        timestamp_str = raw_data.get("timestamp")
-        if not timestamp_str:
-            return None
-
-        try:
-            timestamp = self.timezone_handler.parse_timestamp(timestamp_str)
-            block_context = self._extract_block_context(raw_data)
-
-            result: Dict[str, Any] = {
-                "type": "api_error",
-                "timestamp": timestamp,
-                "content": message,
-                "retry_in_ms": retry_in_ms,
-                "max_retries": max_retries,
-                "retry_attempt": retry_attempt,
-                "raw_data": raw_data,
-                "block_context": block_context,
-            }
-
-            if retry_in_ms is not None:
-                result["reset_time"] = self._calculate_reset_time(timestamp, retry_in_ms)
-
-            return result
-
-        except (ValueError, TypeError):
-            return None
-
-    def _calculate_reset_time(
-        self, timestamp: datetime, retry_in_ms: int
-    ) -> datetime:
-        """Calculate reset time from retry delay."""
-        from datetime import timedelta
-
-        delay = timedelta(milliseconds=retry_in_ms)
-        return timestamp + delay
 
     def _process_user_message(
         self, raw_data: Dict[str, Any]

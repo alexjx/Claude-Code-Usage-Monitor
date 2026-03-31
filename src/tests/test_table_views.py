@@ -176,16 +176,15 @@ class TestTableViewsController:
         assert table.show_lines is True
 
         # Check columns
-        assert len(table.columns) == 9
+        assert len(table.columns) == 8
         assert table.columns[0].header == "Date"
         assert table.columns[1].header == "Models"
-        assert table.columns[2].header == "Messages"
-        assert table.columns[3].header == "Input"
-        assert table.columns[4].header == "Output"
-        assert table.columns[5].header == "Cache Create"
-        assert table.columns[6].header == "Cache Read"
-        assert table.columns[7].header == "Total Tokens"
-        assert table.columns[8].header == "Cost (USD)"
+        assert table.columns[2].header == "Input"
+        assert table.columns[3].header == "Output"
+        assert table.columns[4].header == "Cache Create"
+        assert table.columns[5].header == "Cache Read"
+        assert table.columns[6].header == "Total Tokens"
+        assert table.columns[7].header == "Cost (USD)"
 
     def test_create_daily_table_data(
         self,
@@ -224,16 +223,15 @@ class TestTableViewsController:
         assert table.show_lines is True
 
         # Check columns
-        assert len(table.columns) == 9
+        assert len(table.columns) == 8
         assert table.columns[0].header == "Month"
         assert table.columns[1].header == "Models"
-        assert table.columns[2].header == "Messages"
-        assert table.columns[3].header == "Input"
-        assert table.columns[4].header == "Output"
-        assert table.columns[5].header == "Cache Create"
-        assert table.columns[6].header == "Cache Read"
-        assert table.columns[7].header == "Total Tokens"
-        assert table.columns[8].header == "Cost (USD)"
+        assert table.columns[2].header == "Input"
+        assert table.columns[3].header == "Output"
+        assert table.columns[4].header == "Cache Create"
+        assert table.columns[5].header == "Cache Read"
+        assert table.columns[6].header == "Total Tokens"
+        assert table.columns[7].header == "Cost (USD)"
 
     def test_create_monthly_table_data(
         self,
@@ -331,56 +329,14 @@ class TestTableViewsController:
         table = controller.create_daily_table(sample_daily_data, sample_totals, "UTC")
 
         first_models_cell = table.columns[1]._cells[0]
-        first_input_cell = table.columns[3]._cells[0]
-        first_output_cell = table.columns[4]._cells[0]
-        first_cost_cell = table.columns[8]._cells[0]
+        first_input_cell = table.columns[2]._cells[0]
+        first_output_cell = table.columns[3]._cells[0]
+        first_cost_cell = table.columns[7]._cells[0]
 
         assert first_models_cell == "• claude-3-haiku\n• claude-3-sonnet"
         assert first_input_cell == "600 (60.0%)\n400 (40.0%)"
         assert first_output_cell == "300 (60.0%)\n200 (40.0%)"
         assert first_cost_cell == "$0.03 (60.0%)\n$0.02 (40.0%)"
-
-    def test_create_daily_table_includes_messages_column(
-        self,
-        controller: TableViewsController,
-        sample_daily_data: List[Dict[str, Any]],
-        sample_totals: Dict[str, Any],
-    ) -> None:
-        """Test daily table includes Messages column with count data."""
-        table = controller.create_daily_table(sample_daily_data, sample_totals, "UTC")
-
-        # Check Messages column (index 2) has content
-        messages_column = table.columns[2]
-        assert messages_column.header == "Messages"
-
-        # First data row should have non-empty Messages content
-        first_messages_cell = messages_column._cells[0]
-        assert first_messages_cell is not None
-        assert len(first_messages_cell) > 0
-
-        # For model analysis rows, Messages should show format like "6 (60.0%)\n4 (40.0%)"
-        assert "6 (60.0%)" in first_messages_cell
-        assert "4 (40.0%)" in first_messages_cell
-
-    def test_create_monthly_table_includes_messages_column(
-        self,
-        controller: TableViewsController,
-        sample_monthly_data: List[Dict[str, Any]],
-        sample_totals: Dict[str, Any],
-    ) -> None:
-        """Test monthly table includes Messages column with count data."""
-        table = controller.create_monthly_table(
-            sample_monthly_data, sample_totals, "UTC"
-        )
-
-        # Check Messages column (index 2) is present
-        messages_column = table.columns[2]
-        assert messages_column.header == "Messages"
-
-        # First data row should have non-empty Messages content
-        first_messages_cell = messages_column._cells[0]
-        assert first_messages_cell is not None
-        assert len(first_messages_cell) > 0
 
     def test_create_no_data_display(self, controller: TableViewsController) -> None:
         """Test creation of no data display."""
@@ -557,7 +513,7 @@ class TestTableViewsController:
         table = controller.create_daily_table(sample_daily_data, sample_totals, "UTC")
 
         # Check that numeric columns are right-aligned
-        for i in range(2, 9):  # Columns 2-8 are numeric
+        for i in range(2, 8):  # Columns 2-7 are numeric
             assert table.columns[i].justify == "right"
 
     def test_empty_data_lists(self, controller: TableViewsController) -> None:
@@ -580,82 +536,25 @@ class TestTableViewsController:
         monthly_table = controller.create_monthly_table([], empty_totals, "UTC")
         assert monthly_table.row_count == 2  # Separator + totals
 
-    def test_display_aggregated_view_period_label_override(
-        self,
-        controller: TableViewsController,
-        sample_daily_data: List[Dict[str, Any]],
-        sample_totals: Dict[str, Any],
+    def test_create_calib_disclosure_legacy_mode(
+        self, controller: TableViewsController
     ) -> None:
-        """Test that period_label overrides auto-computed period in summary panel."""
-        from io import StringIO
-        from rich.console import Console
+        """Test creation of calibration disclosure for legacy mode."""
+        panel = controller._create_calib_disclosure("legacy")
 
-        custom_period = "Custom Period: Q1 2024"
-        string_io = StringIO()
-        console = Console(file=string_io, force_terminal=True)
+        assert isinstance(panel, Panel)
+        assert panel.title == "⚠️ 口径说明"
+        assert panel.border_style == controller.warning_style
+        assert panel.expand is False
+        assert panel.padding == (1, 2)
 
-        controller.display_aggregated_view(
-            data=sample_daily_data,
-            view_mode="daily",
-            timezone="UTC",
-            plan="pro",
-            token_limit=100000,
-            console=console,
-            period_label=custom_period,
-        )
-
-        output = string_io.getvalue()
-        assert custom_period in output
-
-    def test_display_aggregated_view_without_period_label_uses_auto_computed(
-        self,
-        controller: TableViewsController,
-        sample_daily_data: List[Dict[str, Any]],
-        sample_totals: Dict[str, Any],
+    def test_create_calib_disclosure_unknown_mode(
+        self, controller: TableViewsController
     ) -> None:
-        """Test that without period_label, auto-computed period is used."""
-        from io import StringIO
-        from rich.console import Console
+        """Test creation of calibration disclosure for unknown mode."""
+        panel = controller._create_calib_disclosure("unknown-mode")
 
-        string_io = StringIO()
-        console = Console(file=string_io, force_terminal=True)
-
-        controller.display_aggregated_view(
-            data=sample_daily_data,
-            view_mode="daily",
-            timezone="UTC",
-            plan="pro",
-            token_limit=100000,
-            console=console,
-        )
-
-        output = string_io.getvalue()
-        expected_period = f"{sample_daily_data[0]['date']} to {sample_daily_data[-1]['date']}"
-        assert expected_period in output
-
-    def test_display_aggregated_view_monthly_period_label_override(
-        self,
-        controller: TableViewsController,
-        sample_monthly_data: List[Dict[str, Any]],
-        sample_totals: Dict[str, Any],
-    ) -> None:
-        """Test that period_label overrides auto-computed period for monthly view."""
-        from io import StringIO
-        from rich.console import Console
-
-        custom_period = "Full Year 2024"
-        string_io = StringIO()
-        console = Console(file=string_io, force_terminal=True)
-
-        controller.display_aggregated_view(
-            data=sample_monthly_data,
-            view_mode="monthly",
-            timezone="UTC",
-            plan="pro",
-            token_limit=100000,
-            console=console,
-            period_label=custom_period,
-        )
-
-        output = string_io.getvalue()
-        assert custom_period in output
+        assert isinstance(panel, Panel)
+        assert panel.title == "⚠️ 口径说明"
+        # Should contain the mode name in the message
+        assert "unknown-mode" in str(panel.renderable)

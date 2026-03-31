@@ -164,7 +164,7 @@ def _is_limit_in_block_timerange(
 
 def _format_limit_info(limit_info: Dict[str, Any]) -> Dict[str, Any]:
     """Format limit info for block assignment."""
-    return {
+    result = {
         "type": limit_info["type"],
         "timestamp": limit_info["timestamp"].isoformat(),
         "content": limit_info["content"],
@@ -174,6 +174,17 @@ def _format_limit_info(limit_info: Dict[str, Any]) -> Dict[str, Any]:
             else None
         ),
     }
+
+    # Add retry information for api_error events
+    if limit_info["type"] == "api_error":
+        if limit_info.get("retry_in_ms") is not None:
+            result["retry_in_ms"] = limit_info["retry_in_ms"]
+        if limit_info.get("max_retries") is not None:
+            result["max_retries"] = limit_info["max_retries"]
+        if limit_info.get("retry_attempt") is not None:
+            result["retry_attempt"] = limit_info["retry_attempt"]
+
+    return result
 
 
 def _convert_blocks_to_dict_format(blocks: List[SessionBlock]) -> List[Dict[str, Any]]:

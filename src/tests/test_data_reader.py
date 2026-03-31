@@ -17,8 +17,11 @@ import pytest
 from claude_monitor.core.models import CostMode, UsageEntry
 from claude_monitor.core.pricing import PricingCalculator
 from claude_monitor.data.reader import (
+    _apply_usage_max_dedup,
+    _create_tiered_dedup_key,
     _create_unique_hash,
     _find_jsonl_files,
+    _get_entry_usage_total,
     _map_to_usage_entry,
     _process_single_file,
     _should_process_entry,
@@ -606,6 +609,199 @@ class TestCreateUniqueHash:
 
         result = _create_unique_hash(data)
         assert result is None
+
+
+class TestCreateTieredDedupKey:
+    """Test the _create_tiered_dedup_key function."""
+
+    def test_tiered_key_with_session_and_role(self) -> None:
+        """Test tier 1: sessionId + message.id + role + agent_id + isSidechain."""
+        data = {
+            "sessionId": "sess_123",
+            "message_id": "msg_456",
+            "role": "assistant",
+            "agent_id": "agent_789",
+            "isSidechain": "true",
+        }
+        result = _create_tiered_dedup_key(data)
+        assert result == "sess_123:msg_456:assistant:agent_789:true"
+
+    def test_tiered_key_fallback_to_event_uuid(self) -> None:
+        """Test tier 2: sessionId + event_uuid when role is missing."""
+        data = {
+            "sessionId": "sess_123",
+            "message_id": "msg_456",
+            "event_uuid": "evt_789",
+        }
+        result = _create_tiered_dedup_key(data)
+        assert result == "sess_123:evt_789"
+
+    def test_tiered_key_fallback_to_tool_chain(self) -> None:
+        """Test tier 3: tool result chain when other fields missing."""
+        data = {
+            "sessionId": "sess_123",
+            "message_id": "msg_456",
+            "parentUuid": "parent_001",
+            "sourceToolAssistantUUID": "tool_002",
+            "tool_use_id": "tool_use_003",
+        }
+        result = _create_tiered_dedup_key(data)
+        assert result == "sess_123:parent_001:tool_002:tool_use_003"
+
+    def test_tiered_key_fallback_message_id_only(self) -> None:
+        """Test fallback: message_id only when no sessionId."""
+        data = {"message_id": "msg_456"}
+        result = _create_tiered_dedup_key(data)
+        assert result == "msg_456"
+
+    def test_tiered_key_fallback_session_plus_message(self) -> None:
+        """Test fallback: sessionId + message_id when no other fields."""
+        data = {"sessionId": "sess_123", "message_id": "msg_456"}
+        result = _create_tiered_dedup_key(data)
+        assert result == "sess_123:msg_456"
+
+    def test_tiered_key_missing_message_id(self) -> None:
+        """Test that None is returned when message_id is missing."""
+        data = {"sessionId": "sess_123"}
+        result = _create_tiered_dedup_key(data)
+        assert result is None
+
+    def test_tiered_key_with_nested_message_id(self) -> None:
+        """Test extraction of message.id from nested message dict."""
+        data = {
+            "message": {"id": "msg_nested"},
+            "sessionId": "sess_123",
+            "role": "assistant",
+        }
+        result = _create_tiered_dedup_key(data)
+        assert result == "sess_123:msg_nested:assistant::"
+
+
+class TestGetEntryUsageTotal:
+    """Test the _get_entry_usage_total function."""
+
+    def test_usage_total_basic(self) -> None:
+        """Test basic token sum."""
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_tokens=100,
+            output_tokens=50,
+            cache_creation_tokens=10,
+            cache_read_tokens=5,
+        )
+        result = _get_entry_usage_total(entry)
+        assert result == 165
+
+    def test_usage_total_zeros(self) -> None:
+        """Test with all zeros."""
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
+        )
+        result = _get_entry_usage_total(entry)
+        assert result == 0
+
+
+class TestApplyUsageMaxDedup:
+    """Test the _apply_usage_max_dedup function."""
+
+    def test_dedup_empty_list(self) -> None:
+        """Test with empty list."""
+        result = _apply_usage_max_dedup([])
+        assert result == []
+
+    def test_dedup_single_entry(self) -> None:
+        """Test with single entry."""
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            input_tokens=100,
+            output_tokens=50,
+            message_id="msg_1",
+        )
+        result = _apply_usage_max_dedup([entry])
+        assert len(result) == 1
+        assert result[0].message_id == "msg_1"
+
+    def test_dedup_keeps_max_usage(self) -> None:
+        """Test that entry with max usage is kept."""
+        entries = [
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                input_tokens=100,  # Total: 150
+                output_tokens=50,
+                message_id="msg_1",
+            ),
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+                input_tokens=0,  # Total: 50 (max for this message_id)
+                output_tokens=50,
+                message_id="msg_1",
+            ),
+        ]
+        result = _apply_usage_max_dedup(entries)
+        assert len(result) == 1
+        assert result[0].input_tokens == 100  # The max usage entry
+
+    def test_dedup_preserves_entries_without_message_id(self) -> None:
+        """Test that entries without message_id are preserved."""
+        entries = [
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                input_tokens=100,
+                output_tokens=50,
+                message_id="",  # No message_id
+            ),
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+                input_tokens=200,
+                output_tokens=100,
+                message_id="",  # No message_id
+            ),
+        ]
+        result = _apply_usage_max_dedup(entries)
+        assert len(result) == 2  # Both entries preserved
+
+    def test_dedup_multiple_message_ids(self) -> None:
+        """Test with multiple different message_ids."""
+        entries = [
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                input_tokens=100,
+                output_tokens=50,
+                message_id="msg_1",
+            ),
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+                input_tokens=200,
+                output_tokens=100,
+                message_id="msg_2",
+            ),
+        ]
+        result = _apply_usage_max_dedup(entries)
+        assert len(result) == 2
+        assert {e.message_id for e in result} == {"msg_1", "msg_2"}
+
+    def test_dedup_mixed_with_and_without_message_id(self) -> None:
+        """Test with mix of entries with and without message_id."""
+        entries = [
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                input_tokens=100,
+                output_tokens=50,
+                message_id="msg_1",
+            ),
+            UsageEntry(
+                timestamp=datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+                input_tokens=200,
+                output_tokens=100,
+                message_id="",  # No message_id
+            ),
+        ]
+        result = _apply_usage_max_dedup(entries)
+        assert len(result) == 2
 
 
 class TestUpdateProcessedHashes:
@@ -1744,3 +1940,416 @@ class TestDataProcessors:
         assert DataConverter.to_serializable("string") == "string"
         assert DataConverter.to_serializable(123) == 123
         assert DataConverter.to_serializable(True) is True
+
+
+class TestDetermineAttributionType:
+    """Test the _determine_attribution_type function."""
+
+    def test_determine_attribution_type_subagent_by_flag(self) -> None:
+        """Test subagent attribution when is_sidechain is True."""
+        from claude_monitor.data.reader import _determine_attribution_type
+
+        result = _determine_attribution_type(
+            is_sidechain=True,
+            agent_id="agent_123",
+            source_tool_assistant_uuid="",
+        )
+        assert result == "subagent"
+
+    def test_determine_attribution_type_subagent_by_path(self) -> None:
+        """Test subagent attribution when from subagent path (is_sidechain=True)."""
+        from claude_monitor.data.reader import _determine_attribution_type
+
+        result = _determine_attribution_type(
+            is_sidechain=True,
+            agent_id="",
+            source_tool_assistant_uuid="",
+        )
+        assert result == "subagent"
+
+    def test_determine_attribution_type_primary_agent_with_id(self) -> None:
+        """Test primary_agent attribution when agent_id exists."""
+        from claude_monitor.data.reader import _determine_attribution_type
+
+        result = _determine_attribution_type(
+            is_sidechain=False,
+            agent_id="agent_123",
+            source_tool_assistant_uuid="",
+        )
+        assert result == "primary_agent"
+
+    def test_determine_attribution_type_primary_agent_with_source_uuid(self) -> None:
+        """Test primary_agent attribution when sourceToolAssistantUUID exists."""
+        from claude_monitor.data.reader import _determine_attribution_type
+
+        result = _determine_attribution_type(
+            is_sidechain=False,
+            agent_id="",
+            source_tool_assistant_uuid="tool_uuid_123",
+        )
+        assert result == "primary_agent"
+
+    def test_determine_attribution_type_unknown(self) -> None:
+        """Test unknown attribution when no attribution signals present."""
+        from claude_monitor.data.reader import _determine_attribution_type
+
+        result = _determine_attribution_type(
+            is_sidechain=False,
+            agent_id="",
+            source_tool_assistant_uuid="",
+        )
+        assert result == "unknown"
+
+
+class TestAgentAttributionInUsageEntry:
+    """Test agent attribution fields in UsageEntry."""
+
+    def test_usage_entry_with_agent_fields(self) -> None:
+        """Test UsageEntry with agent attribution fields."""
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            input_tokens=100,
+            output_tokens=50,
+            model="claude-3-haiku",
+            message_id="msg_123",
+            request_id="req_456",
+            agent_id="agent_789",
+            is_sidechain=True,
+            source_tool_assistant_uuid="tool_uuid",
+            attribution_type="subagent",
+        )
+
+        assert entry.agent_id == "agent_789"
+        assert entry.is_sidechain is True
+        assert entry.source_tool_assistant_uuid == "tool_uuid"
+        assert entry.attribution_type == "subagent"
+
+    def test_usage_entry_default_attribution(self) -> None:
+        """Test UsageEntry with default attribution values."""
+        entry = UsageEntry(
+            timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            input_tokens=100,
+            output_tokens=50,
+            model="claude-3-haiku",
+        )
+
+        assert entry.agent_id == ""
+        assert entry.is_sidechain is False
+        assert entry.source_tool_assistant_uuid == ""
+        assert entry.attribution_type == "unknown"
+
+
+class TestIncludeSubagents:
+    """Test include_subagents parameter in load_usage_entries."""
+
+    def test_include_subagents_true_includes_all(self, tmp_path: Path) -> None:
+        """Test that include_subagents=True includes all entries."""
+        # Create temp directory with main and subagents
+        main_dir = tmp_path / "main"
+        main_dir.mkdir()
+        subagents_dir = tmp_path / "subagents"
+        subagents_dir.mkdir()
+
+        # Create main session file
+        main_file = main_dir / "session.jsonl"
+        main_file.write_text(
+            '{"timestamp": "2024-01-01T12:00:00Z", "message": {"id": "msg_1", "usage": {"input_tokens": 100, "output_tokens": 50}}, "type": "assistant"}\n'
+        )
+
+        # Create subagent file
+        subagent_file = subagents_dir / "subagent.jsonl"
+        subagent_file.write_text(
+            '{"timestamp": "2024-01-01T12:01:00Z", "message": {"id": "msg_2", "usage": {"input_tokens": 200, "output_tokens": 100}}, "type": "assistant", "isSidechain": true}\n'
+        )
+
+        with patch(
+            "claude_monitor.core.data_processors.TimestampProcessor"
+        ) as mock_ts_processor:
+            mock_ts = Mock()
+            mock_ts.parse_timestamp.side_effect = [
+                datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+                datetime(2024, 1, 1, 12, 1, tzinfo=timezone.utc),
+            ]
+            mock_ts_processor.return_value = mock_ts
+
+            with patch(
+                "claude_monitor.core.data_processors.TokenExtractor"
+            ) as mock_token_extractor:
+                mock_token_extractor.extract_tokens.side_effect = [
+                    {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "cache_creation_tokens": 0,
+                        "cache_read_tokens": 0,
+                    },
+                    {
+                        "input_tokens": 200,
+                        "output_tokens": 100,
+                        "cache_creation_tokens": 0,
+                        "cache_read_tokens": 0,
+                    },
+                ]
+
+                with patch(
+                    "claude_monitor.core.data_processors.DataConverter"
+                ) as mock_data_converter:
+                    mock_data_converter.extract_model_name.side_effect = [
+                        "claude-3-haiku",
+                        "claude-3-sonnet",
+                    ]
+
+                    with patch(
+                        "claude_monitor.core.pricing.PricingCalculator"
+                    ) as mock_pricing_class:
+                        mock_pricing = Mock()
+                        mock_pricing.calculate_cost_for_entry.return_value = 0.001
+                        mock_pricing_class.return_value = mock_pricing
+
+                        entries, _ = load_usage_entries(
+                            data_path=str(tmp_path),
+                            include_subagents=True,
+                        )
+
+        assert len(entries) == 2
+
+    def test_include_subagents_false_filters_subagents(self, tmp_path: Path) -> None:
+        """Test that include_subagents=False filters out subagent entries."""
+        # Create temp directory with main and subagents
+        main_dir = tmp_path / "main"
+        main_dir.mkdir()
+        subagents_dir = tmp_path / "subagents"
+        subagents_dir.mkdir()
+
+        # Create main session file
+        main_file = main_dir / "session.jsonl"
+        main_file.write_text(
+            '{"timestamp": "2024-01-01T12:00:00Z", "message": {"id": "msg_1", "usage": {"input_tokens": 100, "output_tokens": 50}}, "type": "assistant"}\n'
+        )
+
+        # Create subagent file
+        subagent_file = subagents_dir / "subagent.jsonl"
+        subagent_file.write_text(
+            '{"timestamp": "2024-01-01T12:01:00Z", "message": {"id": "msg_2", "usage": {"input_tokens": 200, "output_tokens": 100}}, "type": "assistant", "isSidechain": true}\n'
+        )
+
+        entries, _ = load_usage_entries(
+            data_path=str(tmp_path),
+            include_subagents=False,
+        )
+
+        # Should only have 1 entry (the main one, not the subagent)
+        assert len(entries) == 1
+        assert entries[0].attribution_type != "subagent"
+
+
+class TestMapToUsageEntryWithAttribution:
+    """Test _map_to_usage_entry with agent attribution fields."""
+
+    def test_map_to_usage_entry_with_is_sidechain(self) -> None:
+        """Test mapping entry with isSidechain field."""
+        data = {
+            "timestamp": "2024-01-01T12:00:00Z",
+            "message": {
+                "id": "msg_123",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+            "model": "claude-3-haiku",
+            "request_id": "req_456",
+            "isSidechain": True,
+        }
+
+        timezone_handler = Mock(spec=TimezoneHandler)
+        pricing_calculator = Mock(spec=PricingCalculator)
+        pricing_calculator.calculate_cost_for_entry.return_value = 0.001
+
+        with patch(
+            "claude_monitor.data.reader.TimestampProcessor"
+        ) as mock_ts_processor:
+            mock_ts = Mock()
+            mock_ts.parse_timestamp.return_value = datetime(
+                2024, 1, 1, 12, 0, tzinfo=timezone.utc
+            )
+            mock_ts_processor.return_value = mock_ts
+
+            with patch(
+                "claude_monitor.data.reader.TokenExtractor"
+            ) as mock_token_extractor:
+                mock_token_extractor.extract_tokens.return_value = {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_tokens": 150,
+                }
+
+                with patch(
+                    "claude_monitor.data.reader.DataConverter"
+                ) as mock_data_converter:
+                    mock_data_converter.extract_model_name.return_value = (
+                        "claude-3-haiku"
+                    )
+
+                    result = _map_to_usage_entry(
+                        data, CostMode.AUTO, timezone_handler, pricing_calculator
+                    )
+
+        assert result is not None
+        assert result.is_sidechain is True
+        assert result.attribution_type == "subagent"
+
+    def test_map_to_usage_entry_with_agent_id(self) -> None:
+        """Test mapping entry with agentId field."""
+        data = {
+            "timestamp": "2024-01-01T12:00:00Z",
+            "message": {
+                "id": "msg_123",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+            "model": "claude-3-haiku",
+            "request_id": "req_456",
+            "agentId": "agent_main_001",
+        }
+
+        timezone_handler = Mock(spec=TimezoneHandler)
+        pricing_calculator = Mock(spec=PricingCalculator)
+        pricing_calculator.calculate_cost_for_entry.return_value = 0.001
+
+        with patch(
+            "claude_monitor.data.reader.TimestampProcessor"
+        ) as mock_ts_processor:
+            mock_ts = Mock()
+            mock_ts.parse_timestamp.return_value = datetime(
+                2024, 1, 1, 12, 0, tzinfo=timezone.utc
+            )
+            mock_ts_processor.return_value = mock_ts
+
+            with patch(
+                "claude_monitor.data.reader.TokenExtractor"
+            ) as mock_token_extractor:
+                mock_token_extractor.extract_tokens.return_value = {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_tokens": 150,
+                }
+
+                with patch(
+                    "claude_monitor.data.reader.DataConverter"
+                ) as mock_data_converter:
+                    mock_data_converter.extract_model_name.return_value = (
+                        "claude-3-haiku"
+                    )
+
+                    result = _map_to_usage_entry(
+                        data, CostMode.AUTO, timezone_handler, pricing_calculator
+                    )
+
+        assert result is not None
+        assert result.agent_id == "agent_main_001"
+        assert result.attribution_type == "primary_agent"
+
+    def test_map_to_usage_entry_with_source_tool_assistant_uuid(self) -> None:
+        """Test mapping entry with sourceToolAssistantUUID field."""
+        data = {
+            "timestamp": "2024-01-01T12:00:00Z",
+            "message": {
+                "id": "msg_123",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+            "model": "claude-3-haiku",
+            "request_id": "req_456",
+            "sourceToolAssistantUUID": "tool_uuid_abc",
+        }
+
+        timezone_handler = Mock(spec=TimezoneHandler)
+        pricing_calculator = Mock(spec=PricingCalculator)
+        pricing_calculator.calculate_cost_for_entry.return_value = 0.001
+
+        with patch(
+            "claude_monitor.data.reader.TimestampProcessor"
+        ) as mock_ts_processor:
+            mock_ts = Mock()
+            mock_ts.parse_timestamp.return_value = datetime(
+                2024, 1, 1, 12, 0, tzinfo=timezone.utc
+            )
+            mock_ts_processor.return_value = mock_ts
+
+            with patch(
+                "claude_monitor.data.reader.TokenExtractor"
+            ) as mock_token_extractor:
+                mock_token_extractor.extract_tokens.return_value = {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_tokens": 150,
+                }
+
+                with patch(
+                    "claude_monitor.data.reader.DataConverter"
+                ) as mock_data_converter:
+                    mock_data_converter.extract_model_name.return_value = (
+                        "claude-3-haiku"
+                    )
+
+                    result = _map_to_usage_entry(
+                        data, CostMode.AUTO, timezone_handler, pricing_calculator
+                    )
+
+        assert result is not None
+        assert result.source_tool_assistant_uuid == "tool_uuid_abc"
+        assert result.attribution_type == "primary_agent"
+
+    def test_map_to_usage_entry_from_subagent_path(self) -> None:
+        """Test mapping entry from subagent path marks as subagent."""
+        data = {
+            "timestamp": "2024-01-01T12:00:00Z",
+            "message": {
+                "id": "msg_123",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+            "model": "claude-3-haiku",
+            "request_id": "req_456",
+        }
+
+        timezone_handler = Mock(spec=TimezoneHandler)
+        pricing_calculator = Mock(spec=PricingCalculator)
+        pricing_calculator.calculate_cost_for_entry.return_value = 0.001
+
+        with patch(
+            "claude_monitor.data.reader.TimestampProcessor"
+        ) as mock_ts_processor:
+            mock_ts = Mock()
+            mock_ts.parse_timestamp.return_value = datetime(
+                2024, 1, 1, 12, 0, tzinfo=timezone.utc
+            )
+            mock_ts_processor.return_value = mock_ts
+
+            with patch(
+                "claude_monitor.data.reader.TokenExtractor"
+            ) as mock_token_extractor:
+                mock_token_extractor.extract_tokens.return_value = {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total_tokens": 150,
+                }
+
+                with patch(
+                    "claude_monitor.data.reader.DataConverter"
+                ) as mock_data_converter:
+                    mock_data_converter.extract_model_name.return_value = (
+                        "claude-3-haiku"
+                    )
+
+                    # Test with is_from_subagent_path=True
+                    result = _map_to_usage_entry(
+                        data, CostMode.AUTO, timezone_handler, pricing_calculator,
+                        is_from_subagent_path=True
+                    )
+
+        assert result is not None
+        assert result.is_sidechain is True
+        assert result.attribution_type == "subagent"

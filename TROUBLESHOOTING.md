@@ -1,6 +1,75 @@
-# 🐛 Troubleshooting Guide - Claude Monitor v3.0.0
+# 🐛 Troubleshooting Guide - Claude Monitor v3.2.0
 
-**⚠️ This guide is specifically for Claude Monitor v3.0.0** - If you're using an older version, please upgrade first.
+**⚠️ This guide is specifically for Claude Monitor v3.2.0** - If you're using an older version, please upgrade first.
+
+## 🚨 Frequently Asked Questions
+
+### Why did my usage numbers change after upgrade?
+
+**If you see LOWER numbers after upgrading to v3.2.0+, this is expected behavior, not a bug.**
+
+The v3.2.0 release includes an improved deduplication algorithm called `message-id-max` (now the default). Here's what changed:
+
+| Aspect | Old Behavior (legacy) | New Behavior (message-id-max) |
+|--------|----------------------|------------------------------|
+| Deduplication Key | `message_id + request_id` | `message.id` (with session context) |
+| Multi-segment messages | May be overcounted | Correctly deduplicated |
+| Modern logs (no request_id) | May miss entries | Properly handled |
+
+**Why the old mode overcounted:**
+- Multi-segment messages (long responses that span multiple API calls) share the same `message.id` but have different `request_id` values
+- The legacy mode couldn't recognize these as the same message, counting each segment separately
+- Modern Claude logs often don't include `request_id`, making legacy deduplication unreliable
+
+**If you need the old (overcounted) numbers for comparison:**
+```bash
+# Use legacy dedup mode temporarily
+claude-monitor --dedupe-mode legacy --view daily
+```
+
+### What do the new deduplication modes mean?
+
+**`--dedupe-mode message-id-max` (default)**
+- Uses `message.id` as the deduplication key within session context
+- For entries with the same key, keeps the one with maximum total usage
+- Best for accuracy with modern Claude Code logs
+
+**`--dedupe-mode legacy`**
+- Uses `message_id + request_id` combination
+- May overcount multi-segment messages
+- Available for backward compatibility only
+
+### How do I filter out subagent usage?
+
+```bash
+# Exclude subagent entries from calculations
+claude-monitor --include-subagents false --view daily
+
+# Include subagents (default behavior)
+claude-monitor --include-subagents true --view daily
+```
+
+### How do progress/working events affect my numbers?
+
+By default (`--count-progress-usage off`), progress events are not counted:
+
+```bash
+# Default - ignore progress events
+claude-monitor --count-progress-usage off --view daily
+
+# Only count progress if no assistant event exists
+claude-monitor --count-progress-usage fallback --view daily
+
+# Count all progress events (may overcount)
+claude-monitor --count-progress-usage strict --view daily
+```
+
+### How can I see per-agent usage breakdown?
+
+```bash
+# Show breakdown by agent type (primary_agent vs subagent)
+claude-monitor --show-agent-breakdown --view daily
+```
 
 ## 🚨 Quick Fixes
 
@@ -390,6 +459,27 @@ claude-monitor --debug --log-file ~/.claude-monitor/logs/debug.log
 
 # Check logs
 tail -f ~/.claude-monitor/logs/debug.log
+```
+
+### Diagnostic Information (Debug Mode)
+
+When running with `--debug`, the following diagnostic information is logged:
+
+**Per-File Processing:**
+```
+File {filename}: {N} read, {M} filtered out, {K} successfully mapped
+```
+
+**Filtering Statistics:**
+```
+Filtered out {count} subagent entries
+Filtered out {count} progress entries (count_progress_usage={mode})
+Processed {count} entries from {n} files
+```
+
+**Deduplication Warnings (message-id-max mode):**
+```
+Non-monotonic usage detected for message_id={key}: segments have usage values {values}, keeping max={max}
 ```
 
 ### Validate Configuration

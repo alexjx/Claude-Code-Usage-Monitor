@@ -116,20 +116,8 @@ def _run_monitoring(args: argparse.Namespace) -> None:
     else:
         console = get_themed_console()
 
-    live_display_active: bool = False
-
-    # Handle different view modes - table views don't need terminal setup
-    if view_mode in ["daily", "monthly"]:
-        data_paths: List[Path] = discover_claude_data_paths()
-        if not data_paths:
-            print_themed("No Claude data directory found", style="error")
-            return
-        data_path: Path = data_paths[0]
-        _run_table_view(args, data_path, view_mode, console)
-        return
-
-    # Realtime mode needs terminal setup for live display
     old_terminal_settings = setup_terminal()
+    live_display_active: bool = False
 
     try:
         data_paths: List[Path] = discover_claude_data_paths()
@@ -140,6 +128,11 @@ def _run_monitoring(args: argparse.Namespace) -> None:
         data_path: Path = data_paths[0]
         logger = logging.getLogger(__name__)
         logger.info(f"Using data path: {data_path}")
+
+        # Handle different view modes
+        if view_mode in ["daily", "monthly"]:
+            _run_table_view(args, data_path, view_mode, console)
+            return
 
         token_limit: int = _get_initial_token_limit(args, str(data_path))
 
@@ -391,23 +384,6 @@ def _run_table_view(
     """Run table view mode (daily/monthly)."""
     logger = logging.getLogger(__name__)
 
-    # Extract time filter params
-    last_days = getattr(args, "last_days", None)
-    start_date = getattr(args, "start_date", None)
-    end_date = getattr(args, "end_date", None)
-
-    # Construct period label
-    if last_days is not None:
-        period_label = f"Last {last_days} days"
-    elif start_date is not None and end_date is not None:
-        period_label = f"{start_date} to {end_date}"
-    elif start_date is not None:
-        period_label = f"From {start_date}"
-    elif end_date is not None:
-        period_label = f"Until {end_date}"
-    else:
-        period_label = None
-
     try:
         # Create aggregator with appropriate mode
         aggregator = UsageAggregator(
@@ -415,9 +391,9 @@ def _run_table_view(
             aggregation_mode=view_mode,
             timezone=args.timezone,
             model_filter=getattr(args, "model_filter", None),
-            last_days=last_days,
-            start_date=start_date,
-            end_date=end_date,
+            dedupe_mode=getattr(args, "dedupe_mode", "message-id-max"),
+            include_subagents=args.include_subagents,
+            count_progress_usage=getattr(args, "count_progress_usage", "off"),
         )
 
         # Create table controller
@@ -438,8 +414,22 @@ def _run_table_view(
             timezone=args.timezone,
             plan=args.plan,
             token_limit=_get_initial_token_limit(args, data_path),
-            period_label=period_label,
+            show_agent_breakdown=getattr(args, "show_agent_breakdown", False),
+            dedupe_mode=getattr(args, "dedupe_mode", "message-id-max"),
         )
+
+        # Wait for user to press Ctrl+C
+        print_themed("\nPress Ctrl+C to exit", style="info")
+        try:
+            # Use signal.pause() for more efficient waiting
+            try:
+                signal.pause()
+            except AttributeError:
+                # Fallback for Windows which doesn't support signal.pause()
+                while True:
+                    time.sleep(1)
+        except KeyboardInterrupt:
+            print_themed("\nExiting...", style="info")
 
     except Exception as e:
         logger.error(f"Error in table view: {e}", exc_info=True)

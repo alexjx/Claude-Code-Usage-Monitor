@@ -327,6 +327,10 @@ class TestSettings:
         assert settings.debug is False
         assert settings.version is False
         assert settings.clear is False
+        assert settings.dedupe_mode == "message-id-max"
+        assert settings.include_subagents is True
+        assert settings.show_agent_breakdown is False
+        assert settings.count_progress_usage == "off"
 
     def test_plan_validator_valid_values(self) -> None:
         """Test plan validator with valid values."""
@@ -420,6 +424,23 @@ class TestSettings:
         """Test log level validator with invalid value."""
         with pytest.raises(ValueError, match="Invalid log level: invalid"):
             Settings(log_level="invalid", _cli_parse_args=[])
+
+    def test_count_progress_usage_validator_valid_values(self) -> None:
+        """Test count_progress_usage validator with valid values."""
+        valid_modes = ["off", "fallback", "strict"]
+
+        for mode in valid_modes:
+            settings = Settings(count_progress_usage=mode, _cli_parse_args=[])
+            assert settings.count_progress_usage == mode
+
+        # Test case insensitive
+        settings = Settings(count_progress_usage="FALLBACK", _cli_parse_args=[])
+        assert settings.count_progress_usage == "fallback"
+
+    def test_count_progress_usage_validator_invalid_value(self) -> None:
+        """Test count_progress_usage validator with invalid value."""
+        with pytest.raises(ValueError, match="Invalid count_progress_usage: invalid"):
+            Settings(count_progress_usage="invalid", _cli_parse_args=[])
 
     def test_field_constraints(self) -> None:
         """Test field constraints and validation."""
@@ -657,6 +678,10 @@ class TestSettings:
             log_level="DEBUG",
             log_file=Path("/tmp/test.log"),
             version=True,
+            dedupe_mode="legacy",
+            include_subagents=False,
+            show_agent_breakdown=True,
+            count_progress_usage="strict",
             _cli_parse_args=[],
         )
 
@@ -675,6 +700,10 @@ class TestSettings:
         assert namespace.log_level == "DEBUG"
         assert namespace.log_file == "/tmp/test.log"
         assert namespace.version is True
+        assert namespace.dedupe_mode == "legacy"
+        assert namespace.include_subagents is False
+        assert namespace.show_agent_breakdown is True
+        assert namespace.count_progress_usage == "strict"
 
     def test_to_namespace_none_values(self) -> None:
         """Test conversion to namespace with None values."""

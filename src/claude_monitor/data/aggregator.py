@@ -59,6 +59,7 @@ class AggregatedPeriod:
     model_breakdowns: Dict[str, AggregatedStats] = field(
         default_factory=lambda: defaultdict(AggregatedStats)
     )
+    agent_breakdown: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def add_entry(self, entry: UsageEntry) -> None:
         """Add an entry to this period's aggregate."""
@@ -71,6 +72,30 @@ class AggregatedPeriod:
 
         # Add to model-specific stats
         self.model_breakdowns[model].add_entry(entry)
+
+        # Track agent breakdown
+        attribution_type = entry.attribution_type or "unknown"
+        agent_key = f"{attribution_type}:{entry.agent_id}" if entry.agent_id else attribution_type
+
+        if agent_key not in self.agent_breakdown:
+            self.agent_breakdown[agent_key] = {
+                "attribution_type": attribution_type,
+                "agent_id": entry.agent_id or None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+                "cost_usd": 0.0,
+                "entries_count": 0,
+            }
+
+        agent_stats = self.agent_breakdown[agent_key]
+        agent_stats["input_tokens"] += entry.input_tokens
+        agent_stats["output_tokens"] += entry.output_tokens
+        agent_stats["cache_creation_tokens"] += entry.cache_creation_tokens
+        agent_stats["cache_read_tokens"] += entry.cache_read_tokens
+        agent_stats["cost_usd"] += entry.cost_usd or 0.0
+        agent_stats["entries_count"] += 1
 
     def to_dict(self, period_type: str) -> Dict[str, Any]:
         """Convert to dictionary format for display."""
@@ -86,6 +111,7 @@ class AggregatedPeriod:
                 model: stats.to_dict() for model, stats in self.model_breakdowns.items()
             },
             "entries_count": self.stats.count,
+            "agent_breakdown": self.agent_breakdown,
         }
         return result
 
@@ -99,9 +125,9 @@ class UsageAggregator:
         aggregation_mode: str = "daily",
         timezone: str = "UTC",
         model_filter: Optional[str] = None,
-        last_days: Optional[int] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        dedupe_mode: str = "message-id-max",
+        include_subagents: bool = True,
+        count_progress_usage: str = "off",
     ):
         """Initialize the aggregator.
 
@@ -110,17 +136,20 @@ class UsageAggregator:
             aggregation_mode: Mode of aggregation ('daily' or 'monthly')
             timezone: Timezone string for date formatting
             model_filter: Optional model keyword filter (comma/space separated)
-            last_days: Optional number of days to include (takes precedence over start_date/end_date)
-            start_date: Optional start date filter (YYYY-MM-DD format)
-            end_date: Optional end date filter (YYYY-MM-DD format)
+            dedupe_mode: Deduplication mode ('message-id-max' or 'legacy')
+            include_subagents: Whether to include subagent entries
+            count_progress_usage: How to count progress/working events
+                'off' = don't count progress usage (default)
+                'fallback' = count only if explicit usage data exists and no corresponding assistant event
+                'strict' = always count progress events (may overcount)
         """
         self.data_path = data_path
         self.aggregation_mode = aggregation_mode
         self.timezone = timezone
         self.model_filter = model_filter
-        self.last_days = last_days
-        self.start_date = start_date
-        self.end_date = end_date
+        self.dedupe_mode = dedupe_mode
+        self.include_subagents = include_subagents
+        self.count_progress_usage = count_progress_usage
         self.timezone_handler = TimezoneHandler()
 
     def _parse_model_filter_terms(self, model_filter: Optional[str]) -> List[str]:
@@ -321,31 +350,13 @@ class UsageAggregator:
 
         logger.info(f"Starting aggregation in {self.aggregation_mode} mode")
 
-        # Compute hours_back for last_days filter
-        hours_back = None
-        if self.last_days:
-            hours_back = self.last_days * 24
-
-        # Parse date filters
-        start_datetime = None
-        end_datetime = None
-        if self.start_date:
-            start_dt = self.timezone_handler.parse_timestamp(self.start_date)
-            if start_dt:
-                # start_date uses 00:00:00 (beginning of day)
-                start_datetime = start_dt.replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-        if self.end_date:
-            end_dt = self.timezone_handler.parse_timestamp(self.end_date)
-            if end_dt:
-                # end_date uses 23:59:59.999999 (end of day)
-                end_datetime = end_dt.replace(
-                    hour=23, minute=59, second=59, microsecond=999999
-                )
-
         # Load usage entries
-        entries, _ = load_usage_entries(data_path=self.data_path, hours_back=hours_back)
+        entries, _ = load_usage_entries(
+            data_path=self.data_path,
+            dedupe_mode=self.dedupe_mode,
+            include_subagents=self.include_subagents,
+            count_progress_usage=self.count_progress_usage,
+        )
 
         if not entries:
             logger.warning("No usage entries found")
@@ -366,8 +377,8 @@ class UsageAggregator:
 
         # Aggregate based on mode
         if self.aggregation_mode == "daily":
-            return self.aggregate_daily(entries, start_datetime, end_datetime)
+            return self.aggregate_daily(entries)
         elif self.aggregation_mode == "monthly":
-            return self.aggregate_monthly(entries, start_datetime, end_datetime)
+            return self.aggregate_monthly(entries)
         else:
             raise ValueError(f"Invalid aggregation mode: {self.aggregation_mode}")

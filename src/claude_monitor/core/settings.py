@@ -3,38 +3,17 @@
 import argparse
 import json
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import pytz
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from claude_monitor import __version__
 
 logger = logging.getLogger(__name__)
-
-
-# Fields that should be persisted to last_used.json
-PERSISTENT_FIELDS = frozenset({
-    "theme",
-    "timezone",
-    "time_format",
-    "refresh_rate",
-    "reset_hour",
-    "view",
-    "custom_limit_tokens",
-})
-
-# Filter fields that should NEVER be persisted
-NON_PERSISTENT_FILTER_FIELDS = frozenset({
-    "model_filter",
-    "last_days",
-    "start_date",
-    "end_date",
-})
 
 
 class LastUsedParams:
@@ -48,12 +27,20 @@ class LastUsedParams:
     def save(self, settings: "Settings") -> None:
         """Save current settings as last used."""
         try:
-            params = {"timestamp": datetime.now().isoformat()}
+            params = {
+                "theme": settings.theme,
+                "timezone": settings.timezone,
+                "time_format": settings.time_format,
+                "refresh_rate": settings.refresh_rate,
+                "reset_hour": settings.reset_hour,
+                "view": settings.view,
+                "timestamp": datetime.now().isoformat(),
+            }
 
-            for field in PERSISTENT_FIELDS:
-                value = getattr(settings, field, None)
-                if value is not None:
-                    params[field] = value
+            if settings.custom_limit_tokens:
+                params["custom_limit_tokens"] = settings.custom_limit_tokens
+            if settings.model_filter:
+                params["model_filter"] = settings.model_filter
 
             self.config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -192,40 +179,24 @@ class Settings(BaseSettings):
 
     clear: bool = Field(default=False, description="Clear saved configuration")
 
-    # Governance and dedupe switches
-    dedupe_mode: Literal["legacy", "message-id-max"] = Field(
+    dedupe_mode: Literal["message-id-max", "legacy"] = Field(
         default="message-id-max",
-        description="Deduplication mode: 'legacy' uses message_id+request_id, 'message-id-max' uses message_id only with final usage aggregation",
+        description="Deduplication mode: 'message-id-max' keeps usage-max snapshot for same message.id; 'legacy' uses message_id+request_id",
     )
 
     include_subagents: bool = Field(
         default=True,
-        description="Include subagent usage in aggregation when True",
+        description="Include subagent usage data (default true). Set to false to filter out subagent entries.",
     )
 
     show_agent_breakdown: bool = Field(
         default=False,
-        description="Show agent/subagent breakdown in output when True",
+        description="Show agent breakdown in realtime view (default off). When enabled, displays usage breakdown by agent (primary_agent, subagent).",
     )
 
     count_progress_usage: Literal["off", "fallback", "strict"] = Field(
         default="off",
-        description="Progress event usage counting: 'off' (default, ignore), 'fallback' (count if no assistant event), 'strict' (count all)",
-    )
-
-    # Time filter fields
-    last_days: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Quick filter for past N days (must be >= 1 if provided)",
-    )
-    start_date: Optional[str] = Field(
-        default=None,
-        description="Start date for custom range (format: YYYY-MM-DD)",
-    )
-    end_date: Optional[str] = Field(
-        default=None,
-        description="End date for custom range (format: YYYY-MM-DD)",
+        description="How to count progress/working events: 'off'=don't count progress usage, 'fallback'=count only if explicit usage data exists, 'strict'=always count progress events (may overcount). Default is 'off' for backward compatibility.",
     )
 
     @field_validator("plan", mode="before")
@@ -298,48 +269,33 @@ class Settings(BaseSettings):
             raise ValueError(f"Invalid log level: {v}")
         return v_upper
 
-    @field_validator("start_date", "end_date")
+    @field_validator("dedupe_mode", mode="before")
     @classmethod
-    def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
-        """Validate date format is YYYY-MM-DD."""
-        if v is None:
-            return v
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
-            raise ValueError(f"Invalid date format: {v}. Must be YYYY-MM-DD")
-        # Also validate it's a valid date
-        try:
-            datetime.strptime(v, "%Y-%m-%d")
-        except ValueError as e:
-            raise ValueError(f"Invalid date: {v}. Error: {e}")
+    def validate_dedupe_mode(cls, v: Any) -> str:
+        """Validate and normalize dedupe_mode value."""
+        if isinstance(v, str):
+            v_lower = v.lower()
+            valid_modes = ["message-id-max", "legacy"]
+            if v_lower in valid_modes:
+                return v_lower
+            raise ValueError(
+                f"Invalid dedupe_mode: {v}. Must be one of: {', '.join(valid_modes)}"
+            )
         return v
 
-    @model_validator(mode="after")
-    def validate_time_filter_constraints(self) -> "Settings":
-        """Validate time filter constraints:
-        1. last_days is mutually exclusive with start_date/end_date
-        2. start_date <= end_date when both are provided
-        """
-        # Check mutual exclusivity
-        has_last_days = self.last_days is not None
-        has_start_date = self.start_date is not None
-        has_end_date = self.end_date is not None
-
-        if has_last_days and (has_start_date or has_end_date):
+    @field_validator("count_progress_usage", mode="before")
+    @classmethod
+    def validate_count_progress_usage(cls, v: Any) -> str:
+        """Validate and normalize count_progress_usage value."""
+        if isinstance(v, str):
+            v_lower = v.lower()
+            valid_modes = ["off", "fallback", "strict"]
+            if v_lower in valid_modes:
+                return v_lower
             raise ValueError(
-                "Cannot use --last-days with --start-date or --end-date. "
-                "Use either --last-days OR --start-date/--end-date, not both."
+                f"Invalid count_progress_usage: {v}. Must be one of: {', '.join(valid_modes)}"
             )
-
-        # Validate date ordering
-        if has_start_date and has_end_date:
-            start = datetime.strptime(self.start_date, "%Y-%m-%d")
-            end = datetime.strptime(self.end_date, "%Y-%m-%d")
-            if start > end:
-                raise ValueError(
-                    f"Start date {self.start_date} must be before or equal to end date {self.end_date}"
-                )
-
-        return self
+        return v
 
     @classmethod
     def settings_customise_sources(
@@ -395,12 +351,6 @@ class Settings(BaseSettings):
                     continue
                 if key not in cli_provided_fields:
                     setattr(settings, key, value)
-
-            # Defensive cleanup: clear any filter fields that weren't explicitly passed via CLI
-            # This ensures legacy last_used.json files with dirty filter values don't pollute current run
-            for field in NON_PERSISTENT_FILTER_FIELDS:
-                if field not in cli_provided_fields and getattr(settings, field, None) is not None:
-                    setattr(settings, field, None)
 
             if (
                 "plan" in cli_provided_fields
@@ -462,8 +412,5 @@ class Settings(BaseSettings):
         args.include_subagents = self.include_subagents
         args.show_agent_breakdown = self.show_agent_breakdown
         args.count_progress_usage = self.count_progress_usage
-        args.last_days = self.last_days
-        args.start_date = self.start_date
-        args.end_date = self.end_date
 
         return args

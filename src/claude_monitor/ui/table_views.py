@@ -67,9 +67,6 @@ class TableViewsController:
             period_column_name, style=self.key_style, width=period_column_width
         )
         table.add_column("Models", style=self.value_style, width=20)
-        table.add_column(
-            "Messages", style=self.value_style, justify="right", width=12
-        )
         table.add_column("Input", style=self.value_style, justify="right", width=12)
         table.add_column("Output", style=self.value_style, justify="right", width=12)
         table.add_column(
@@ -109,7 +106,6 @@ class TableViewsController:
                 + data["cache_read_tokens"]
             )
             models_text = self._format_models(data["models_used"])
-            messages_text = format_number(data.get("entries_count", 0))
             input_text = format_number(data["input_tokens"])
             output_text = format_number(data["output_tokens"])
             cache_create_text = format_number(data["cache_creation_tokens"])
@@ -126,7 +122,6 @@ class TableViewsController:
                     data.get("total_cost", 0.0),
                 )
                 models_text = model_analysis["models"]
-                messages_text = model_analysis["messages"]
                 input_text = model_analysis["input"]
                 output_text = model_analysis["output"]
                 cache_create_text = model_analysis["cache_create"]
@@ -137,7 +132,6 @@ class TableViewsController:
             table.add_row(
                 data[period_key],
                 models_text,
-                messages_text,
                 input_text,
                 output_text,
                 cache_create_text,
@@ -146,138 +140,29 @@ class TableViewsController:
                 cost_text,
             )
 
-    def _add_totals_row(
-        self,
-        table: Table,
-        totals: Dict[str, Any],
-        data: Optional[List[Dict[str, Any]]] = None,
-    ) -> None:
-        """Add totals row to the table with model breakdown.
+    def _add_totals_row(self, table: Table, totals: Dict[str, Any]) -> None:
+        """Add totals row to the table.
 
         Args:
-            table: Table to add rows to
+            table: Table to add totals to
             totals: Dictionary with total statistics
-            data: Optional aggregated data to calculate model breakdowns
         """
         # Add separator
-        table.add_row("", "", "", "", "", "", "", "", "")
+        table.add_row("", "", "", "", "", "", "", "")
 
-        # Calculate model totals if data is provided
-        model_totals_data = self._calculate_model_totals(data) if data else {}
-
-        if model_totals_data:
-            # Sort models by total tokens (descending)
-            sorted_models = sorted(
-                model_totals_data.items(),
-                key=lambda x: x[1]["total_tokens"],
-                reverse=True,
-            )
-
-            # Build multi-line content for each column (with Total highlight styling)
-            # Use accent_style (yellow) for Total row to distinguish from data rows
-            total_style = self.accent_style
-            models_lines = [Text("Total", style=total_style)]
-            messages_lines = [Text(format_number(totals.get("entries_count", 0)), style=total_style)]
-            input_lines = [Text(format_number(totals["input_tokens"]), style=total_style)]
-            output_lines = [Text(format_number(totals["output_tokens"]), style=total_style)]
-            cache_create_lines = [Text(format_number(totals["cache_creation_tokens"]), style=total_style)]
-            cache_read_lines = [Text(format_number(totals["cache_read_tokens"]), style=total_style)]
-            total_tokens_lines = [Text(format_number(totals["total_tokens"]), style=total_style)]
-            cost_lines = [Text(format_currency(totals["total_cost"]), style=self.success_style)]
-
-            for model, model_data in sorted_models:
-                total_tokens = model_data["total_tokens"]
-                total_all = totals.get("total_tokens", 0)
-                total_cost = totals.get("total_cost", 0.0)
-                total_messages = totals.get("entries_count", 0)
-
-                token_pct = (total_tokens / total_all * 100.0) if total_all > 0 else 0.0
-                cost_pct = (
-                    (model_data["cost"] / total_cost * 100.0) if total_cost > 0 else 0.0
-                )
-                input_pct = (
-                    (model_data["input_tokens"] / totals.get("input_tokens", 0) * 100.0)
-                    if totals.get("input_tokens", 0) > 0
-                    else 0.0
-                )
-                output_pct = (
-                    (model_data["output_tokens"] / totals.get("output_tokens", 0) * 100.0)
-                    if totals.get("output_tokens", 0) > 0
-                    else 0.0
-                )
-                cache_create_pct = (
-                    (
-                        model_data["cache_creation_tokens"]
-                        / totals.get("cache_creation_tokens", 0)
-                        * 100.0
-                    )
-                    if totals.get("cache_creation_tokens", 0) > 0
-                    else 0.0
-                )
-                cache_read_pct = (
-                    (
-                        model_data["cache_read_tokens"]
-                        / totals.get("cache_read_tokens", 0)
-                        * 100.0
-                    )
-                    if totals.get("cache_read_tokens", 0) > 0
-                    else 0.0
-                )
-                messages_pct = (
-                    (model_data["count"] / total_messages * 100.0)
-                    if total_messages > 0
-                    else 0.0
-                )
-
-                models_lines.append(Text(f"• {model}", style=self.value_style))
-                messages_lines.append(
-                    Text(f"{format_number(model_data['count'])} ({messages_pct:.1f}%)", style=self.value_style)
-                )
-                input_lines.append(
-                    Text(f"{format_number(model_data['input_tokens'])} ({input_pct:.1f}%)", style=self.value_style)
-                )
-                output_lines.append(
-                    Text(f"{format_number(model_data['output_tokens'])} ({output_pct:.1f}%)", style=self.value_style)
-                )
-                cache_create_lines.append(
-                    Text(f"{format_number(model_data['cache_creation_tokens'])} ({cache_create_pct:.1f}%)", style=self.value_style)
-                )
-                cache_read_lines.append(
-                    Text(f"{format_number(model_data['cache_read_tokens'])} ({cache_read_pct:.1f}%)", style=self.value_style)
-                )
-                total_tokens_lines.append(
-                    Text(f"{format_number(total_tokens)} ({token_pct:.1f}%)", style=self.value_style)
-                )
-                cost_lines.append(
-                    Text(f"{format_currency(model_data['cost'])} ({cost_pct:.1f}%)", style=self.value_style)
-                )
-
-            # Add single row with multi-line cells
-            table.add_row(
-                Text("\n").join(models_lines),
-                "",
-                Text("\n").join(messages_lines),
-                Text("\n").join(input_lines),
-                Text("\n").join(output_lines),
-                Text("\n").join(cache_create_lines),
-                Text("\n").join(cache_read_lines),
-                Text("\n").join(total_tokens_lines),
-                Text("\n").join(cost_lines),
-            )
-        else:
-            # Simple totals row without breakdown (with highlight styling)
-            total_style = self.accent_style
-            table.add_row(
-                Text("Total", style=total_style),
-                "",
-                Text(format_number(totals.get("entries_count", 0)), style=total_style),
-                Text(format_number(totals["input_tokens"]), style=total_style),
-                Text(format_number(totals["output_tokens"]), style=total_style),
-                Text(format_number(totals["cache_creation_tokens"]), style=total_style),
-                Text(format_number(totals["cache_read_tokens"]), style=total_style),
-                Text(format_number(totals["total_tokens"]), style=total_style),
-                Text(format_currency(totals["total_cost"]), style=self.success_style),
-            )
+        # Add totals row
+        table.add_row(
+            Text("Total", style=self.accent_style),
+            "",
+            Text(format_number(totals["input_tokens"]), style=self.accent_style),
+            Text(format_number(totals["output_tokens"]), style=self.accent_style),
+            Text(
+                format_number(totals["cache_creation_tokens"]), style=self.accent_style
+            ),
+            Text(format_number(totals["cache_read_tokens"]), style=self.accent_style),
+            Text(format_number(totals["total_tokens"]), style=self.accent_style),
+            Text(format_currency(totals["total_cost"]), style=self.success_style),
+        )
 
     def create_daily_table(
         self,
@@ -310,8 +195,8 @@ class TableViewsController:
             include_model_analysis=True,
         )
 
-        # Add totals with model breakdown
-        self._add_totals_row(table, totals, data=daily_data)
+        # Add totals
+        self._add_totals_row(table, totals)
 
         return table
 
@@ -339,63 +224,12 @@ class TableViewsController:
         )
 
         # Add data rows
-        self._add_data_rows(table, monthly_data, "month", include_model_analysis=True)
+        self._add_data_rows(table, monthly_data, "month")
 
-        # Add totals with model breakdown
-        self._add_totals_row(table, totals, data=monthly_data)
+        # Add totals
+        self._add_totals_row(table, totals)
 
         return table
-
-    def _calculate_model_totals(
-        self, data: List[Dict[str, Any]]
-    ) -> Dict[str, Dict[str, Any]]:
-        """Calculate totals per model across all periods.
-
-        Args:
-            data: List of aggregated data with model_breakdowns
-
-        Returns:
-            Dictionary mapping model name to its totals
-        """
-        model_totals: Dict[str, Dict[str, int]] = {}
-
-        for period in data:
-            model_breakdowns = period.get("model_breakdowns", {})
-            for model, breakdown in model_breakdowns.items():
-                if model not in model_totals:
-                    model_totals[model] = {
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "cache_creation_tokens": 0,
-                        "cache_read_tokens": 0,
-                        "cost": 0.0,
-                        "count": 0,
-                    }
-                model_totals[model]["input_tokens"] += breakdown.get("input_tokens", 0)
-                model_totals[model]["output_tokens"] += breakdown.get("output_tokens", 0)
-                model_totals[model]["cache_creation_tokens"] += breakdown.get(
-                    "cache_creation_tokens", 0
-                )
-                model_totals[model]["cache_read_tokens"] += breakdown.get(
-                    "cache_read_tokens", 0
-                )
-                model_totals[model]["cost"] += breakdown.get("cost", 0.0)
-                model_totals[model]["count"] += breakdown.get("count", 0)
-
-        # Calculate total tokens for each model
-        result: Dict[str, Dict[str, Any]] = {}
-        for model, totals in model_totals.items():
-            result[model] = {
-                **totals,
-                "total_tokens": (
-                    totals["input_tokens"]
-                    + totals["output_tokens"]
-                    + totals["cache_creation_tokens"]
-                    + totals["cache_read_tokens"]
-                ),
-            }
-
-        return result
 
     def create_summary_panel(
         self, view_type: str, totals: Dict[str, Any], period: str
@@ -416,7 +250,7 @@ class TableViewsController:
             "",
             f"Total Tokens: {format_number(totals['total_tokens'])}",
             f"Total Cost: {format_currency(totals['total_cost'])}",
-            f"Messages: {format_number(totals['entries_count'])}",
+            f"Entries: {format_number(totals['entries_count'])}",
         ]
 
         summary_text = Text("\n".join(summary_lines), style=self.value_style)
@@ -470,7 +304,6 @@ class TableViewsController:
         if not models:
             return {
                 "models": "No models",
-                "messages": format_number(period_data.get("entries_count", 0)),
                 "input": format_number(period_data.get("input_tokens", 0)),
                 "output": format_number(period_data.get("output_tokens", 0)),
                 "cache_create": format_number(
@@ -492,7 +325,6 @@ class TableViewsController:
                 input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
             )
             model_cost = breakdown.get("cost", 0.0)
-            model_count = breakdown.get("count", 0)
             model_totals.append(
                 {
                     "model": model,
@@ -502,7 +334,6 @@ class TableViewsController:
                     "cache_read_tokens": cache_read_tokens,
                     "tokens": model_tokens,
                     "cost": model_cost,
-                    "count": model_count,
                 }
             )
 
@@ -515,7 +346,6 @@ class TableViewsController:
         cache_read_lines = []
         total_tokens_lines = []
         cost_lines = []
-        messages_lines = []
         for item in model_totals:
             total_token_pct = (
                 (item["tokens"] / period_total_tokens * 100.0)
@@ -555,11 +385,6 @@ class TableViewsController:
                 if period_data.get("cache_read_tokens", 0) > 0
                 else 0.0
             )
-            messages_pct = (
-                (item["count"] / period_data.get("entries_count", 0) * 100.0)
-                if period_data.get("entries_count", 0) > 0
-                else 0.0
-            )
 
             models_lines.append(f"• {item['model']}")
             input_lines.append(
@@ -578,13 +403,9 @@ class TableViewsController:
                 f"{format_number(item['tokens'])} ({total_token_pct:.1f}%)"
             )
             cost_lines.append(f"{format_currency(item['cost'])} ({cost_pct:.1f}%)")
-            messages_lines.append(
-                f"{format_number(item['count'])} ({messages_pct:.1f}%)"
-            )
 
         return {
             "models": "\n".join(models_lines),
-            "messages": "\n".join(messages_lines),
             "input": "\n".join(input_lines),
             "output": "\n".join(output_lines),
             "cache_create": "\n".join(cache_create_lines),
@@ -615,6 +436,160 @@ class TableViewsController:
             border_style=self.warning_style,
             expand=True,
             height=10,
+        )
+
+        return panel
+
+    def _create_agent_breakdown_panel(
+        self, agent_breakdown: Dict[str, Any], totals: Dict[str, Any]
+    ) -> Panel:
+        """Create agent breakdown panel for display.
+
+        Args:
+            agent_breakdown: Aggregated agent breakdown data
+            totals: Total statistics for percentage calculation
+
+        Returns:
+            Rich Panel object with agent breakdown
+        """
+        lines = []
+
+        # Calculate grand totals for percentage
+        total_tokens = totals.get("total_tokens", 0)
+        total_cost = totals.get("total_cost", 0.0)
+
+        # Sort agents by total tokens
+        agent_stats = []
+        for agent_key, stats in agent_breakdown.items():
+            if isinstance(stats, dict):
+                agent_tokens = (
+                    stats.get("input_tokens", 0)
+                    + stats.get("output_tokens", 0)
+                    + stats.get("cache_creation_tokens", 0)
+                    + stats.get("cache_read_tokens", 0)
+                )
+                agent_cost = stats.get("cost_usd", 0.0)
+                agent_count = stats.get("entries_count", 0)
+
+                # Format agent name for display
+                attribution_type = stats.get("attribution_type", "unknown")
+                agent_id = stats.get("agent_id")
+                if agent_id:
+                    display_name = f"{attribution_type} ({agent_id})"
+                else:
+                    display_name = attribution_type
+
+                agent_stats.append({
+                    "name": display_name,
+                    "tokens": agent_tokens,
+                    "cost": agent_cost,
+                    "count": agent_count,
+                })
+
+        # Sort by tokens descending
+        agent_stats.sort(key=lambda x: -x["tokens"])
+
+        if not agent_stats:
+            return Panel(
+                Text("No agent data available", style=self.value_style),
+                title="Agent Breakdown",
+                border_style=self.border_style,
+                expand=False,
+            )
+
+        lines.append("[bold]👤 Agent Breakdown:[/]")
+        lines.append("")
+
+        for stat in agent_stats:
+            pct = (stat["tokens"] / total_tokens * 100.0) if total_tokens > 0 else 0.0
+            cost_pct = (stat["cost"] / total_cost * 100.0) if total_cost > 0 else 0.0
+
+            lines.append(
+                f"• [value]{stat['name']}:[/] [warning]{stat['tokens']:,}[/][dim] tokens[/] "
+                f"({pct:.1f}%) | [success]{stat['cost']:.4f}[/][dim] USD[/] ({cost_pct:.1f}%)"
+            )
+
+        text = Text("\n".join(lines), style=self.value_style)
+
+        panel = Panel(
+            text,
+            title="Agent Breakdown",
+            title_align="left",
+            border_style=self.border_style,
+            expand=False,
+            padding=(1, 2),
+        )
+
+        return panel
+
+    def _compute_agent_breakdown_totals(
+        self, data: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Compute aggregated agent breakdown across all periods.
+
+        Args:
+            data: List of aggregated period data
+
+        Returns:
+            Dictionary mapping agent keys to aggregated stats
+        """
+        combined: Dict[str, Dict[str, Any]] = {}
+
+        for period in data:
+            period_breakdown = period.get("agent_breakdown", {})
+            for agent_key, stats in period_breakdown.items():
+                if agent_key not in combined:
+                    combined[agent_key] = {
+                        "attribution_type": stats.get("attribution_type", "unknown"),
+                        "agent_id": stats.get("agent_id"),
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cache_creation_tokens": 0,
+                        "cache_read_tokens": 0,
+                        "cost_usd": 0.0,
+                        "entries_count": 0,
+                    }
+
+                for key in ["input_tokens", "output_tokens", "cache_creation_tokens",
+                            "cache_read_tokens", "entries_count"]:
+                    combined[agent_key][key] += stats.get(key, 0)
+
+                combined[agent_key]["cost_usd"] += stats.get("cost_usd", 0.0)
+
+        return combined
+
+    def _create_calib_disclosure(self, dedupe_mode: str) -> Panel:
+        """Create "口径说明" (calibration disclosure) panel when dedupe-mode changed.
+
+        Args:
+            dedupe_mode: Current dedupe mode being used
+
+        Returns:
+            Rich Panel object with calibration disclosure
+        """
+        if dedupe_mode == "legacy":
+            message = (
+                "[yellow]⚠️ 口径说明:[/yellow] 当前使用 'legacy' 去重模式。\n"
+                "[dim]Legacy 模式使用 message_id+request_id 进行去重，"
+                "可能与默认的 'message-id-max' 模式（保留 usage-max 快照）有不同的统计算法。\n"
+                "这可能导致与标准视图的统计数据存在差异。[/dim]"
+            )
+        else:
+            message = (
+                f"[yellow]⚠️ 口径说明:[/yellow] 当前使用 '{dedupe_mode}' 去重模式。\n"
+                "[dim]该模式可能与默认的 'message-id-max' 模式有不同的统计算法。\n"
+                "这可能导致与标准视图的统计数据存在差异。[/dim]"
+            )
+
+        text = Text(message, style=self.value_style)
+
+        panel = Panel(
+            Align.center(text, vertical="middle"),
+            title="⚠️ 口径说明",
+            title_align="center",
+            border_style=self.warning_style,
+            expand=False,
+            padding=(1, 2),
         )
 
         return panel
@@ -655,7 +630,8 @@ class TableViewsController:
         plan: str,
         token_limit: int,
         console: Optional[Console] = None,
-        period_label: Optional[str] = None,
+        show_agent_breakdown: bool = False,
+        dedupe_mode: str = "message-id-max",
     ) -> None:
         """Display aggregated view with table and summary.
 
@@ -666,7 +642,8 @@ class TableViewsController:
             plan: Plan type
             token_limit: Token limit for the plan
             console: Optional Console instance
-            period_label: Optional period label from time filters
+            show_agent_breakdown: Whether to show agent breakdown (default False)
+            dedupe_mode: Deduplication mode (default 'message-id-max')
         """
         if not data:
             no_data_display = self.create_no_data_display(view_mode)
@@ -694,9 +671,7 @@ class TableViewsController:
         }
 
         # Determine period for summary
-        if period_label:
-            period = period_label
-        elif view_mode == "daily":
+        if view_mode == "daily":
             period = f"{data[0]['date']} to {data[-1]['date']}" if data else "No data"
         else:  # monthly
             period = f"{data[0]['month']} to {data[-1]['month']}" if data else "No data"
@@ -707,14 +682,39 @@ class TableViewsController:
         # Create and display table
         table = self.create_aggregate_table(data, totals, view_mode, timezone)
 
+        # Compute agent breakdown if requested
+        agent_breakdown_panel = None
+        if show_agent_breakdown:
+            agent_breakdown = self._compute_agent_breakdown_totals(data)
+            if agent_breakdown:
+                agent_breakdown_panel = self._create_agent_breakdown_panel(
+                    agent_breakdown, totals
+                )
+
         # Display using console if provided
         if console:
+            # Show "口径说明" disclosure if dedupe_mode is not default
+            if dedupe_mode != "message-id-max":
+                calib_panel = self._create_calib_disclosure(dedupe_mode)
+                console.print(calib_panel)
+                console.print()
             console.print(summary_panel)
             console.print()
             console.print(table)
+            if agent_breakdown_panel:
+                console.print()
+                console.print(agent_breakdown_panel)
         else:
             from rich import print as rprint
 
+            # Show "口径说明" disclosure if dedupe_mode is not default
+            if dedupe_mode != "message-id-max":
+                calib_panel = self._create_calib_disclosure(dedupe_mode)
+                rprint(calib_panel)
+                rprint()
             rprint(summary_panel)
             rprint()
             rprint(table)
+            if agent_breakdown_panel:
+                rprint()
+                rprint(agent_breakdown_panel)
