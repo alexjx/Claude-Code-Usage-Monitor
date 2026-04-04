@@ -338,8 +338,13 @@ class TableViewsController:
             period_column_width=10,
         )
 
-        # Add data rows
-        self._add_data_rows(table, monthly_data, "month")
+        # Add data rows (same per-model rendering path as daily)
+        self._add_data_rows(
+            table,
+            monthly_data,
+            "month",
+            include_model_analysis=True,
+        )
 
         # Add totals with model breakdown
         self._add_totals_row(table, totals, data=monthly_data)
@@ -445,18 +450,10 @@ class TableViewsController:
         if not models:
             return "No models"
 
-        # Create bullet list
         if len(models) == 1:
             return models[0]
-        elif len(models) <= 3:
-            return "\n".join([f"• {model}" for model in models])
-        else:
-            # Truncate long lists
-            first_two = models[:2]
-            remaining_count = len(models) - 2
-            formatted = "\n".join([f"• {model}" for model in first_two])
-            formatted += f"\n• ...and {remaining_count} more"
-            return formatted
+
+        return "\n".join([f"• {model}" for model in models])
 
     def _format_model_analysis(
         self,
