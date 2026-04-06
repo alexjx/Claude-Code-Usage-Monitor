@@ -616,11 +616,11 @@ COST_THRESHOLDS: List[Tuple[float, str]] = [
     (0.0, COST_STYLES["low"]),
 ]
 
-# Velocity/burn rate emojis and labels
+# Velocity/burn rate emojis and labels for tokens per second
 VELOCITY_INDICATORS: Dict[str, Dict[str, Union[str, float]]] = {
-    "slow": {"emoji": "🐌", "label": "Slow", "threshold": 50},
-    "normal": {"emoji": "➡️", "label": "Normal", "threshold": 150},
-    "fast": {"emoji": "🚀", "label": "Fast", "threshold": 300},
+    "slow": {"emoji": "🐌", "label": "Slow", "threshold": 50 / 60},
+    "normal": {"emoji": "➡️", "label": "Normal", "threshold": 150 / 60},
+    "fast": {"emoji": "🚀", "label": "Fast", "threshold": 300 / 60},
     "very_fast": {"emoji": "⚡", "label": "Very fast", "threshold": float("inf")},
 }
 
@@ -645,7 +645,7 @@ def get_velocity_indicator(burn_rate: float) -> Dict[str, str]:
     """Get velocity indicator based on burn rate.
 
     Args:
-        burn_rate: Token consumption rate (tokens per minute).
+        burn_rate: Token consumption rate (tokens per second).
 
     Returns:
         Dictionary with 'emoji' and 'label' keys for the velocity category.

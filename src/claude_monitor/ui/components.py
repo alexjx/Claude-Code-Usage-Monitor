@@ -19,7 +19,7 @@ class VelocityIndicator:
         """Get velocity emoji based on burn rate.
 
         Args:
-            burn_rate: Token burn rate per minute
+            burn_rate: Token burn rate per second
 
         Returns:
             Emoji representing velocity level
@@ -32,7 +32,7 @@ class VelocityIndicator:
         """Get velocity description based on burn rate.
 
         Args:
-            burn_rate: Token burn rate per minute
+            burn_rate: Token burn rate per second
 
         Returns:
             Text description of velocity level
@@ -45,7 +45,7 @@ class VelocityIndicator:
         """Render velocity indicator.
 
         Args:
-            burn_rate: Token burn rate per minute
+            burn_rate: Token burn rate per second
             include_description: Whether to include text description
 
         Returns:

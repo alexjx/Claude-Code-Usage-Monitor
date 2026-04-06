@@ -68,6 +68,11 @@ class SessionDisplayComponent:
         self.time_progress = TimeProgressBar()
         self.model_usage = ModelUsageBar()
 
+    @staticmethod
+    def _convert_burn_rate_to_per_second(burn_rate: float) -> float:
+        """Convert burn rate from tokens per minute to tokens per second."""
+        return burn_rate / 60.0
+
     def _render_wide_progress_bar(self, percentage: float) -> str:
         """Render a wide progress bar (50 chars) using centralized progress bar logic.
 
@@ -346,9 +351,10 @@ class SessionDisplayComponent:
                     self._render_agent_breakdown_section(agent_breakdown, indent="")
                 )
 
-            velocity_emoji = VelocityIndicator.get_velocity_emoji(burn_rate)
+            burn_rate_per_second = self._convert_burn_rate_to_per_second(burn_rate)
+            velocity_emoji = VelocityIndicator.get_velocity_emoji(burn_rate_per_second)
             screen_buffer.append(
-                f"🔥 [value]Burn Rate:[/]              [warning]{burn_rate:.1f}[/] [dim]tokens/min[/] {velocity_emoji}"
+                f"🔥 [value]Burn Rate:[/]              [warning]{burn_rate_per_second:.1f}[/] [dim]tokens/sec[/] {velocity_emoji}"
             )
 
             cost_per_min = (
@@ -382,9 +388,10 @@ class SessionDisplayComponent:
                 f"🎯 [value]Tokens:[/]         [value]{tokens_used:,}[/] / [dim]~{token_limit:,}[/] ([info]{tokens_left:,} left[/])"
             )
 
-            velocity_emoji = VelocityIndicator.get_velocity_emoji(burn_rate)
+            burn_rate_per_second = self._convert_burn_rate_to_per_second(burn_rate)
+            velocity_emoji = VelocityIndicator.get_velocity_emoji(burn_rate_per_second)
             screen_buffer.append(
-                f"🔥 [value]Burn Rate:[/]      [warning]{burn_rate:.1f}[/] [dim]tokens/min[/] {velocity_emoji}"
+                f"🔥 [value]Burn Rate:[/]      [warning]{burn_rate_per_second:.1f}[/] [dim]tokens/sec[/] {velocity_emoji}"
             )
 
             screen_buffer.append(
@@ -510,7 +517,7 @@ class SessionDisplayComponent:
             f"🎯 [value]Tokens:[/]         [value]0[/] / [dim]~{token_limit:,}[/] ([info]0 left[/])"
         )
         screen_buffer.append(
-            "🔥 [value]Burn Rate:[/]      [warning]0.0[/] [dim]tokens/min[/]"
+            "🔥 [value]Burn Rate:[/]      [warning]0.0[/] [dim]tokens/sec[/]"
         )
         screen_buffer.append(
             "💲 [value]Cost Rate:[/]      [cost.low]$0.00[/] [dim]$/min[/]"
