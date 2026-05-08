@@ -186,70 +186,27 @@ class TableViewsController:
             cost_lines = [Text(format_currency(totals["total_cost"]), style=self.success_style)]
 
             for model, model_data in sorted_models:
-                total_tokens = model_data["total_tokens"]
-                total_all = totals.get("total_tokens", 0)
-                total_cost = totals.get("total_cost", 0.0)
-                total_messages = totals.get("entries_count", 0)
-
-                token_pct = (total_tokens / total_all * 100.0) if total_all > 0 else 0.0
-                cost_pct = (
-                    (model_data["cost"] / total_cost * 100.0) if total_cost > 0 else 0.0
-                )
-                input_pct = (
-                    (model_data["input_tokens"] / totals.get("input_tokens", 0) * 100.0)
-                    if totals.get("input_tokens", 0) > 0
-                    else 0.0
-                )
-                output_pct = (
-                    (model_data["output_tokens"] / totals.get("output_tokens", 0) * 100.0)
-                    if totals.get("output_tokens", 0) > 0
-                    else 0.0
-                )
-                cache_create_pct = (
-                    (
-                        model_data["cache_creation_tokens"]
-                        / totals.get("cache_creation_tokens", 0)
-                        * 100.0
-                    )
-                    if totals.get("cache_creation_tokens", 0) > 0
-                    else 0.0
-                )
-                cache_read_pct = (
-                    (
-                        model_data["cache_read_tokens"]
-                        / totals.get("cache_read_tokens", 0)
-                        * 100.0
-                    )
-                    if totals.get("cache_read_tokens", 0) > 0
-                    else 0.0
-                )
-                messages_pct = (
-                    (model_data["count"] / total_messages * 100.0)
-                    if total_messages > 0
-                    else 0.0
-                )
-
                 models_lines.append(Text(f"• {model}", style=self.value_style))
                 messages_lines.append(
-                    Text(f"{format_number(model_data['count'])} ({messages_pct:.1f}%)", style=self.value_style)
+                    Text(format_number(model_data['count']), style=self.value_style)
                 )
                 input_lines.append(
-                    Text(f"{format_number(model_data['input_tokens'])} ({input_pct:.1f}%)", style=self.value_style)
+                    Text(format_number(model_data['input_tokens']), style=self.value_style)
                 )
                 output_lines.append(
-                    Text(f"{format_number(model_data['output_tokens'])} ({output_pct:.1f}%)", style=self.value_style)
+                    Text(format_number(model_data['output_tokens']), style=self.value_style)
                 )
                 cache_create_lines.append(
-                    Text(f"{format_number(model_data['cache_creation_tokens'])} ({cache_create_pct:.1f}%)", style=self.value_style)
+                    Text(format_number(model_data['cache_creation_tokens']), style=self.value_style)
                 )
                 cache_read_lines.append(
-                    Text(f"{format_number(model_data['cache_read_tokens'])} ({cache_read_pct:.1f}%)", style=self.value_style)
+                    Text(format_number(model_data['cache_read_tokens']), style=self.value_style)
                 )
                 total_tokens_lines.append(
-                    Text(f"{format_number(total_tokens)} ({token_pct:.1f}%)", style=self.value_style)
+                    Text(format_number(model_data["total_tokens"]), style=self.value_style)
                 )
                 cost_lines.append(
-                    Text(f"{format_currency(model_data['cost'])} ({cost_pct:.1f}%)", style=self.value_style)
+                    Text(format_currency(model_data['cost']), style=self.value_style)
                 )
 
             # Add single row with multi-line cells
@@ -514,70 +471,14 @@ class TableViewsController:
         total_tokens_lines = []
         cost_lines = []
         for item in model_totals:
-            total_token_pct = (
-                (item["tokens"] / period_total_tokens * 100.0)
-                if period_total_tokens > 0
-                else 0.0
-            )
-            cost_pct = (
-                (item["cost"] / period_total_cost * 100.0)
-                if period_total_cost > 0
-                else 0.0
-            )
-            input_pct = (
-                (item["input_tokens"] / period_data.get("input_tokens", 0) * 100.0)
-                if period_data.get("input_tokens", 0) > 0
-                else 0.0
-            )
-            output_pct = (
-                (item["output_tokens"] / period_data.get("output_tokens", 0) * 100.0)
-                if period_data.get("output_tokens", 0) > 0
-                else 0.0
-            )
-            cache_create_pct = (
-                (
-                    item["cache_creation_tokens"]
-                    / period_data.get("cache_creation_tokens", 0)
-                    * 100.0
-                )
-                if period_data.get("cache_creation_tokens", 0) > 0
-                else 0.0
-            )
-            cache_read_pct = (
-                (
-                    item["cache_read_tokens"]
-                    / period_data.get("cache_read_tokens", 0)
-                    * 100.0
-                )
-                if period_data.get("cache_read_tokens", 0) > 0
-                else 0.0
-            )
-            messages_pct = (
-                (item["count"] / period_data.get("entries_count", 0) * 100.0)
-                if period_data.get("entries_count", 0) > 0
-                else 0.0
-            )
-
             models_lines.append(f"• {item['model']}")
-            messages_lines.append(
-                f"{format_number(item['count'])} ({messages_pct:.1f}%)"
-            )
-            input_lines.append(
-                f"{format_number(item['input_tokens'])} ({input_pct:.1f}%)"
-            )
-            output_lines.append(
-                f"{format_number(item['output_tokens'])} ({output_pct:.1f}%)"
-            )
-            cache_create_lines.append(
-                f"{format_number(item['cache_creation_tokens'])} ({cache_create_pct:.1f}%)"
-            )
-            cache_read_lines.append(
-                f"{format_number(item['cache_read_tokens'])} ({cache_read_pct:.1f}%)"
-            )
-            total_tokens_lines.append(
-                f"{format_number(item['tokens'])} ({total_token_pct:.1f}%)"
-            )
-            cost_lines.append(f"{format_currency(item['cost'])} ({cost_pct:.1f}%)")
+            messages_lines.append(format_number(item['count']))
+            input_lines.append(format_number(item['input_tokens']))
+            output_lines.append(format_number(item['output_tokens']))
+            cache_create_lines.append(format_number(item['cache_creation_tokens']))
+            cache_read_lines.append(format_number(item['cache_read_tokens']))
+            total_tokens_lines.append(format_number(item['tokens']))
+            cost_lines.append(format_currency(item['cost']))
 
         return {
             "models": "\n".join(models_lines),
