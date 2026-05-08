@@ -174,4 +174,38 @@ def normalize_model_name(model: str) -> str:
             return "claude-3-5-haiku"
         return "claude-3-haiku"
 
+    # Third-party model normalization (order matters: more specific first)
+    if "glm-5-1" in model_lower:
+        return "glm-5-1"
+    if "glm-5-turbo-v" in model_lower:
+        return "glm-5-turbo-v"
+    if "glm-5-turbo" in model_lower:
+        return "glm-5-turbo"
+    if "glm-5" in model_lower:
+        return "glm-5"
+    if "glm-4-7-flash" in model_lower:
+        return "glm-4-7-flash"
+    if "glm-4-7" in model_lower:
+        return "glm-4-7"
+    if "glm-4-5-air" in model_lower:
+        return "glm-4-5-air"
+    if "glm-4-5v" in model_lower:
+        return "glm-4-5v"
+    if "glm-4-5" in model_lower:
+        return "glm-4-5"
+    if "glm-4" in model_lower:
+        return "glm-4"
+    if "minimax-m2.7-highspeed" in model_lower:
+        return "minimax-m2.7-highspeed"
+    if "minimax-m2.7" in model_lower:
+        return "minimax-m2.7"
+    if "deepseek-v4-flash" in model_lower:
+        return "deepseek-v4-flash"
+    if "deepseek-v4-pro" in model_lower:
+        return "deepseek-v4-pro"
+    if "deepseek-chat" in model_lower:
+        return "deepseek-chat"
+    if "deepseek-reasoner" in model_lower:
+        return "deepseek-reasoner"
+
     return model

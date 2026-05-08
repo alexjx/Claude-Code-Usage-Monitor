@@ -47,6 +47,33 @@ class PricingCalculator:
         },
     }
 
+    # Third-party model pricing (per million tokens)
+    # GLM models (Z.AI)
+    MODEL_PRICING: Dict[str, Dict[str, float]] = {
+        # GLM-4 family
+        "glm-4": {"input": 0.6, "output": 2.2, "cache_creation": 0.75, "cache_read": 0.06},
+        "glm-4-5": {"input": 0.6, "output": 2.2, "cache_creation": 0.75, "cache_read": 0.06},
+        "glm-4-5-air": {"input": 0.13, "output": 0.85, "cache_creation": 0.16, "cache_read": 0.013},
+        "glm-4-5v": {"input": 0.6, "output": 1.8, "cache_creation": 0.75, "cache_read": 0.06},
+        "glm-4-7": {"input": 0.4, "output": 1.75, "cache_creation": 0.5, "cache_read": 0.04},
+        "glm-4-7-flash": {"input": 0.06, "output": 0.4, "cache_creation": 0.075, "cache_read": 0.006},
+        # GLM-5 family
+        "glm-5": {"input": 0.6, "output": 1.92, "cache_creation": 0.75, "cache_read": 0.06},
+        "glm-5-turbo": {"input": 1.2, "output": 4.0, "cache_creation": 1.5, "cache_read": 0.12},
+        "glm-5-1": {"input": 5.0, "output": 25.0, "cache_creation": 6.25, "cache_read": 0.5},
+        # GLM-5V
+        "glm-5-turbo-v": {"input": 1.2, "output": 4.0, "cache_creation": 1.5, "cache_read": 0.12},
+        # MiniMax models
+        "minimax-m2.7": {"input": 0.3, "output": 1.2, "cache_creation": 0.06, "cache_read": 0.375},
+        "minimax-m2.7-highspeed": {"input": 0.6, "output": 2.4, "cache_creation": 0.06, "cache_read": 0.375},
+        # DeepSeek V4 models
+        "deepseek-v4-flash": {"input": 0.14, "output": 0.28, "cache_creation": 0.175, "cache_read": 0.0036},
+        "deepseek-v4-pro": {"input": 0.44, "output": 0.88, "cache_creation": 0.55, "cache_read": 0.0036},
+        # DeepSeek V3 / R1 models (legacy)
+        "deepseek-chat": {"input": 0.14, "output": 0.28, "cache_creation": 0.175, "cache_read": 0.014},
+        "deepseek-reasoner": {"input": 0.14, "output": 0.28, "cache_creation": 0.175, "cache_read": 0.014},
+    }
+
     def __init__(
         self, custom_pricing: Optional[Dict[str, Dict[str, float]]] = None
     ) -> None:
@@ -56,8 +83,8 @@ class PricingCalculator:
             custom_pricing: Optional custom pricing dictionary to override defaults.
                           Should follow same structure as MODEL_PRICING.
         """
-        # Use fallback pricing if no custom pricing provided
-        self.pricing: Dict[str, Dict[str, float]] = custom_pricing or {
+        # Build pricing dict with all available models
+        all_pricing: Dict[str, Dict[str, float]] = {
             "claude-3-opus": self.FALLBACK_PRICING["opus"],
             "claude-3-sonnet": self.FALLBACK_PRICING["sonnet"],
             "claude-3-haiku": self.FALLBACK_PRICING["haiku"],
@@ -66,6 +93,9 @@ class PricingCalculator:
             "claude-sonnet-4-20250514": self.FALLBACK_PRICING["sonnet"],
             "claude-opus-4-20250514": self.FALLBACK_PRICING["opus"],
         }
+        # Merge third-party pricing
+        all_pricing.update(self.MODEL_PRICING)
+        self.pricing = custom_pricing or all_pricing
         self._cost_cache: Dict[str, float] = {}
 
     def calculate_cost(
